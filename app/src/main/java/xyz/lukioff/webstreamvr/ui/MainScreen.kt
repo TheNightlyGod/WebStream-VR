@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
@@ -47,17 +48,22 @@ import xyz.lukioff.webstreamvr.AspectRatio
 import xyz.lukioff.webstreamvr.R
 import xyz.lukioff.webstreamvr.StreamSettings
 import xyz.lukioff.webstreamvr.StreamStatus
+import xyz.lukioff.webstreamvr.cast.CastPkgState
 import xyz.lukioff.webstreamvr.cast.HeadsetLink
 
 @Composable
 fun MainScreen(
     status: StreamStatus,
     settings: StreamSettings,
+    castPkgState: CastPkgState,
     onSettingsChange: (StreamSettings) -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    onInstallService: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var showInstallDialog by remember { mutableStateOf(false) }
+
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(
             Modifier
@@ -68,7 +74,19 @@ fun MainScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-            StatusCard(status, onStart, onStop)
+            StatusCard(
+                status = status,
+                castPkgState = castPkgState,
+                onStart = {
+                    if (castPkgState != CastPkgState.OK) {
+                        showInstallDialog = true
+                    } else {
+                        onStart()
+                    }
+                },
+                onStop = onStop,
+                onInstallService = onInstallService,
+            )
             SettingsCard(settings, onSettingsChange)
             Text(
                 stringResource(R.string.hint_footer),
@@ -77,10 +95,43 @@ fun MainScreen(
             )
         }
     }
+
+    if (showInstallDialog) {
+        val dialogDesc = when (castPkgState) {
+            CastPkgState.OUTDATED -> stringResource(R.string.install_dialog_desc_outdated)
+            else -> stringResource(R.string.install_dialog_desc_missing)
+        }
+        AlertDialog(
+            onDismissRequest = { showInstallDialog = false },
+            title = { Text(stringResource(R.string.install_dialog_title)) },
+            text = { Text(dialogDesc) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showInstallDialog = false
+                        onInstallService()
+                    }
+                ) {
+                    Text(stringResource(R.string.action_install_service))
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showInstallDialog = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
+    }
 }
 
 @Composable
-private fun StatusCard(status: StreamStatus, onStart: () -> Unit, onStop: () -> Unit) {
+private fun StatusCard(
+    status: StreamStatus,
+    castPkgState: CastPkgState,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onInstallService: () -> Unit,
+) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -93,8 +144,13 @@ private fun StatusCard(status: StreamStatus, onStart: () -> Unit, onStop: () -> 
                 Spacer(Modifier.size(10.dp))
                 Text(stateText(status), style = MaterialTheme.typography.titleMedium)
             }
-            status.detail?.let {
-                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+            status.detail?.let { detail ->
+                Text(detail, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+            }
+            if (castPkgState != CastPkgState.OK || status.detail?.contains("com.oculus.magicislandcastingservice") == true) {
+                OutlinedButton(onClick = onInstallService) {
+                    Text(stringResource(R.string.action_install_service))
+                }
             }
             if (status.running && status.headset == HeadsetLink.State.STREAMING) {
                 Text(

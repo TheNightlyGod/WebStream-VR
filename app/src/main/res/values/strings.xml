@@ -39,4 +39,10 @@
     <string name="notification_channel">Трансляция</string>
     <string name="notification_starting">Запуск трансляции…</string>
     <string name="notification_no_network">Нет сети Wi-Fi</string>
+
+    <string name="action_install_service">Установить сервис</string>
+    <string name="install_dialog_title">Требуется сервис кастинга</string>
+    <string name="install_dialog_desc_missing">Пакет com.oculus.magicislandcastingservice не найден в системе. Установить его сейчас?</string>
+    <string name="install_dialog_desc_outdated">Версия com.oculus.magicislandcastingservice на устройстве устарела или не подходит. Установить нужную версию из ресурсов?</string>
+    <string name="action_cancel">Отмена</string>
 </resources>

@@ -84,7 +84,7 @@ class StreamService : Service(), HeadsetLink.Listener {
     }
 
     private fun startStreaming() {
-        if (started) return
+        if (started) stopStreaming()
         started = true
         startForeground(
             NOTIFICATION_ID,

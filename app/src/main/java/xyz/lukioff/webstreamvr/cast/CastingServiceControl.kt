@@ -6,6 +6,26 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.util.Log
 
+const val CAST_PKG = "com.oculus.magicislandcastingservice"
+const val MIN_CAST_VERSION_CODE = 839200015L // 2.0.0.0.4915
+
+enum class CastPkgState { MISSING, OUTDATED, OK }
+
+fun castPackageState(ctx: Context): CastPkgState {
+    val pi = try {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            ctx.packageManager.getPackageInfo(CAST_PKG, PackageManager.PackageInfoFlags.of(0))
+        } else {
+            @Suppress("DEPRECATION")
+            ctx.packageManager.getPackageInfo(CAST_PKG, 0)
+        }
+    } catch (_: PackageManager.NameNotFoundException) {
+        return CastPkgState.MISSING
+    }
+    return if (pi.longVersionCode >= MIN_CAST_VERSION_CODE) CastPkgState.OK
+    else CastPkgState.OUTDATED
+}
+
 /**
  * Talks to Meta's casting service (com.oculus.magicislandcastingservice).
  *
@@ -15,17 +35,12 @@ import android.util.Log
  */
 object CastingServiceControl {
     private const val TAG = "CastingServiceControl"
-    const val PACKAGE = "com.oculus.magicislandcastingservice"
+    const val PACKAGE = CAST_PKG
     private const val SERVICE = "$PACKAGE.CastingService"
     private const val ACTION_START_SERVICE = "$PACKAGE.START_SERVICE"
     private const val ACTION_CONNECT = "$PACKAGE.CONNECT"
 
-    fun isInstalled(context: Context): Boolean = try {
-        context.packageManager.getPackageInfo(PACKAGE, 0)
-        true
-    } catch (_: PackageManager.NameNotFoundException) {
-        false
-    }
+    fun isInstalled(context: Context): Boolean = castPackageState(context) == CastPkgState.OK
 
     /** Returns null on success or the error text. */
     fun startService(context: Context): String? {
