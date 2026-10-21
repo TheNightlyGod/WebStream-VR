@@ -1,0 +1,166 @@
+:root {
+  --bg: #050608;
+  --panel: rgba(18, 20, 26, 0.72);
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --text: #eef1f6;
+  --muted: #9aa3b2;
+  --live: #ff3b4e;
+  --accent: #6ea8ff;
+  --radius: 999px;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+}
+
+video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left));
+  transition: opacity 0.3s ease;
+}
+.bar.top { top: 0; justify-content: space-between; background: linear-gradient(rgba(0, 0, 0, 0.55), transparent); }
+.bar.bottom {
+  bottom: 0;
+  padding-top: 24px;
+  padding-bottom: max(14px, env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
+}
+body.idle .bar, body.idle .stats { opacity: 0; pointer-events: none; }
+body.idle { cursor: none; }
+
+.status, .viewers, .pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  backdrop-filter: blur(10px);
+  font-weight: 500;
+}
+
+.status .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.status.live .dot {
+  background: var(--live);
+  box-shadow: 0 0 0 0 rgba(255, 59, 78, 0.6);
+  animation: pulse 1.6s infinite;
+}
+@keyframes pulse {
+  70% { box-shadow: 0 0 0 8px rgba(255, 59, 78, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 59, 78, 0); }
+}
+
+.viewers { color: var(--muted); }
+svg { width: 20px; height: 20px; fill: currentColor; flex: none; }
+
+button {
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+}
+.pill:hover, .icon:hover { background: rgba(40, 44, 54, 0.85); }
+.pill.on { border-color: var(--accent); color: var(--accent); }
+.icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+}
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+input[type="range"] { width: 120px; accent-color: var(--accent); }
+.spacer { flex: 1; }
+
+.stats {
+  position: absolute;
+  top: 64px;
+  left: max(16px, env(safe-area-inset-left));
+  margin: 0;
+  padding: 12px 16px;
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  backdrop-filter: blur(10px);
+  font-variant-numeric: tabular-nums;
+  transition: opacity 0.3s ease;
+}
+.stats div { display: flex; justify-content: space-between; gap: 18px; }
+.stats div.wide { flex-direction: column; gap: 2px; max-width: 300px; }
+.stats div.wide dd { color: var(--muted); font-size: 13px; }
+.stats dt { color: var(--muted); }
+.stats dd { margin: 0; }
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 16px;
+  padding: 24px;
+  text-align: center;
+  background: rgba(5, 6, 8, 0.55);
+  pointer-events: none;
+}
+.overlay p { margin: 0; max-width: 34em; color: var(--muted); font-size: 17px; }
+.spinner {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.15);
+  border-top-color: var(--text);
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 520px) {
+  input[type="range"] { display: none; }
+  .status, .viewers, .pill { font-size: 14px; padding: 6px 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner, .status.live .dot { animation: none; }
+}

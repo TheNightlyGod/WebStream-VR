@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>WebStream VR</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="stage">
+    <video id="video" muted playsinline disablepictureinpicture></video>
+
+    <div id="overlay" class="overlay">
+      <div class="spinner" aria-hidden="true"></div>
+      <p id="overlay-text">Подключение…</p>
+    </div>
+
+    <header class="bar top">
+      <div id="status" class="status" role="status" aria-live="polite">
+        <span class="dot" aria-hidden="true"></span>
+        <span id="status-text">Подключение…</span>
+      </div>
+      <div class="viewers" title="Зрителей сейчас">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5c-5 0-9 4.5-10 7 1 2.5 5 7 10 7s9-4.5 10-7c-1-2.5-5-7-10-7zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/></svg>
+        <span id="viewers">0</span>
+      </div>
+    </header>
+
+    <dl id="stats" class="stats" hidden>
+      <div><dt>Кадр</dt><dd id="resolution">—</dd></div>
+      <div><dt>Частота</dt><dd><span id="fps">0</span> к/с</dd></div>
+      <div><dt>Поток</dt><dd><span id="bitrate">0</span> Мбит/с</dd></div>
+      <div><dt>Запас буфера</dt><dd id="latency">—</dd></div>
+      <div class="wide"><dt>Паузы</dt><dd id="pauses">не было</dd></div>
+    </dl>
+
+    <footer class="bar bottom">
+      <button id="audio-button" class="pill" type="button" aria-pressed="false" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 5V4L8 9H4zm12.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
+        <span id="audio-label">Включить звук</span>
+      </button>
+      <input id="volume" type="range" min="0" max="1" step="0.01" value="0.9" aria-label="Громкость">
+      <span class="spacer"></span>
+      <button id="stats-button" class="icon" type="button" title="Статистика" aria-label="Статистика">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V10h3v10H5zm5.5 0V4h3v16h-3zM16 20v-7h3v7h-3z"/></svg>
+      </button>
+      <button id="fullscreen-button" class="icon" type="button" title="Во весь экран (F)" aria-label="Во весь экран">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm14 0h2v6h-6v-2h4v-4z"/></svg>
+      </button>
+    </footer>
+  </main>
+  <script type="module" src="player.js"></script>
+</body>
+</html>
