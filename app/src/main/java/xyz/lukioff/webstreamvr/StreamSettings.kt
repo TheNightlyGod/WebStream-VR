@@ -88,6 +88,8 @@ data class StreamSettings(
             else -> 1920 * 1080 // Quest 2, Quest Pro
         }
 
+        fun generateRandomPort(): Int = (1024..65535).random()
+
         fun load(context: Context): StreamSettings {
             val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val defaults = StreamSettings()
@@ -98,6 +100,10 @@ data class StreamSettings(
                 "SQUARE" -> AspectRatio.SQUARE to 1440
                 else -> defaults.aspect to defaults.quality
             }
+            val savedPort = if (p.contains("httpPort")) p.getInt("httpPort", 0).takeIf { it in 1024..65535 } else null
+            val httpPort = savedPort ?: generateRandomPort().also { port ->
+                p.edit { putInt("httpPort", port) }
+            }
             return StreamSettings(
                 aspect = AspectRatio.entries.firstOrNull { it.name == p.getString("aspect", null) } ?: legacyAspect,
                 quality = p.getInt("quality", legacyQuality).takeIf { it in QUALITIES } ?: defaults.quality,
@@ -107,7 +113,7 @@ data class StreamSettings(
                 stabilization = p.getBoolean("stabilization", defaults.stabilization),
                 bitrateMbps = p.getInt("bitrateMbps", defaults.bitrateMbps),
                 audio = p.getBoolean("audio", defaults.audio),
-                httpPort = p.getInt("httpPort", defaults.httpPort),
+                httpPort = httpPort,
             )
         }
 
