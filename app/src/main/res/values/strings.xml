@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">WebStream-VR</string>
+    <string name="app_name">WebStream VR</string>
 
     <string name="action_start">Начать трансляцию</string>
     <string name="action_stop">Остановить</string>
