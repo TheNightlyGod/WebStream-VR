@@ -102,9 +102,16 @@ class HeadsetLink(private val context: Context, private val listener: Listener) 
     private fun controlLoop() {
         var failures = 0
         while (running) {
-            if (!CastingServiceControl.isInstalled(context)) {
-                listener.onStateChanged(State.ERROR, "Не найден com.oculus.magicislandcastingservice")
-                return
+            when (castPackageState(context)) {
+                CastPkgState.MISSING -> {
+                    listener.onStateChanged(State.ERROR, "Не найден com.oculus.magicislandcastingservice")
+                    return
+                }
+                CastPkgState.OUTDATED -> {
+                    listener.onStateChanged(State.ERROR, "Необходима подходящая версия com.oculus.magicislandcastingservice")
+                    return
+                }
+                CastPkgState.OK -> {}
             }
             listener.onStateChanged(State.STARTING, null)
             val serviceError = CastingServiceControl.startService(context)
