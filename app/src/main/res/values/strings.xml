@@ -1,3 +1,42 @@
 <resources>
     <string name="app_name">WebStream-VR</string>
+
+    <string name="action_start">Начать трансляцию</string>
+    <string name="action_stop">Остановить</string>
+
+    <string name="state_stopped">Трансляция остановлена</string>
+    <string name="state_starting">Запуск сервиса кастинга…</string>
+    <string name="state_waiting">Ждём подключения сервиса кастинга…</string>
+    <string name="state_connected">Шлем подключён, ждём первые кадры…</string>
+    <string name="state_streaming">Идёт трансляция</string>
+    <string name="state_error">Нет связи со шлемом, повторяем…</string>
+
+    <string name="stats_line">%1$d×%2$d · %3$.0f к/с · %4$.1f Мбит/с · зрителей: %5$d</string>
+    <string name="open_in_browser">Откройте в браузере на устройстве в той же сети:</string>
+    <string name="web_port_busy">Порт %1$d занят, выберите другой</string>
+
+    <string name="settings">Настройки</string>
+    <string name="setting_aspect">Формат кадра</string>
+    <string name="setting_quality">Качество: %1$d×%2$d</string>
+    <string name="setting_bitrate">Битрейт</string>
+    <string name="setting_bitrate_hint">Через Wi-Fi: 1080p — 6–10 Мбит/с, 1440p — 12–16. Если картинка замирает, снизьте битрейт или качество. «Авто» — 10–20 Мбит/с на усмотрение шлема.</string>
+    <string name="bitrate_auto">Авто</string>
+    <string name="bitrate_mbps">%1$d Мбит/с</string>
+    <string name="setting_frame_rate">Частота кадров</string>
+    <string name="setting_frame_rate_hint">Шлем может игнорировать это значение и отдавать до 60 к/с</string>
+    <string name="setting_eye">Глаз</string>
+    <string name="eye_left">Левый</string>
+    <string name="eye_right">Правый</string>
+    <string name="setting_fov">Расширение обзора: +%1$d°</string>
+    <string name="setting_fov_hint">0 — стандартный кадр, большие значения захватывают больше, но с искажениями по краям</string>
+    <string name="setting_stabilization">Стабилизация поворотов головы</string>
+    <string name="setting_audio">Передавать звук</string>
+    <string name="setting_port">Порт веб-сервера</string>
+    <string name="setting_port_invalid">Порт от 1024 до 65535</string>
+
+    <string name="hint_footer">Трансляцию делает системный сервис кастинга Meta, в шлеме при этом горит индикатор записи. Пока идёт трансляция, датчик приближения отключён, и экран шлема не гаснет, даже если его снять.</string>
+
+    <string name="notification_channel">Трансляция</string>
+    <string name="notification_starting">Запуск трансляции…</string>
+    <string name="notification_no_network">Нет сети Wi-Fi</string>
 </resources>
