@@ -20,6 +20,7 @@ import java.util.concurrent.Executors
 class WebServer(
     private val assets: AssetManager,
     private val hub: ViewerHub,
+    private val streamCode: String? = null,
     private val statusJson: () -> String,
 ) {
     private var server: ServerSocket? = null
@@ -74,6 +75,11 @@ class WebServer(
             val path = request.path.substringBefore('?')
             when {
                 path == "/ws" && request.headers["upgrade"].equals("websocket", ignoreCase = true) -> {
+                    val code = getQueryParam(request.path, "code")
+                    if (streamCode != null && code != streamCode) {
+                        respond(output, 401, "text/plain; charset=utf-8", "Unauthorized: Invalid code".toByteArray(), request.method)
+                        return
+                    }
                     val key = request.headers["sec-websocket-key"]
                     if (key == null) {
                         respond(output, 400, "text/plain", "Missing Sec-WebSocket-Key".toByteArray(), request.method)
@@ -89,8 +95,14 @@ class WebServer(
                     client.soTimeout = 0
                     hub.serve(client, input, statusJson())
                 }
-                path == "/api/status" ->
-                    respond(output, 200, "application/json; charset=utf-8", statusJson().toByteArray(), request.method)
+                path == "/api/status" -> {
+                    val code = getQueryParam(request.path, "code")
+                    if (streamCode != null && code != streamCode) {
+                        respond(output, 401, "application/json; charset=utf-8", """{"error":"Unauthorized"}""".toByteArray(), request.method)
+                    } else {
+                        respond(output, 200, "application/json; charset=utf-8", statusJson().toByteArray(), request.method)
+                    }
+                }
                 else -> serveAsset(output, path, request.method)
             }
         } catch (_: IOException) {
@@ -143,6 +155,15 @@ class WebServer(
     }
 
     private class Request(val method: String, val path: String, val headers: Map<String, String>)
+
+    private fun getQueryParam(pathAndQuery: String, paramName: String): String? {
+        val queryString = pathAndQuery.substringAfter('?', "")
+        if (queryString.isEmpty()) return null
+        return queryString.split('&')
+            .map { it.split('=', limit = 2) }
+            .firstOrNull { it[0] == paramName && it.size == 2 }
+            ?.get(1)
+    }
 
     private fun readRequest(input: InputStream): Request? {
         val requestLine = readLine(input) ?: return null

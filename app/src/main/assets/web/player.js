@@ -390,15 +390,57 @@ window.webstream = { pipeline, audio, state, video };
 
 // ---------------------------------------------------------------- network
 
-function connect() {
+function getCode() {
+  const urlCode = new URLSearchParams(location.search).get('code');
+  if (urlCode) return urlCode.trim();
+  return sessionStorage.getItem('streamCode') || '';
+}
+
+function showAuthDialog(errorMsg) {
+  $('auth-dialog').hidden = false;
+  if (errorMsg) {
+    $('auth-error').textContent = errorMsg;
+    $('auth-error').hidden = false;
+  } else {
+    $('auth-error').hidden = true;
+  }
+  setTimeout(() => $('auth-code').focus(), 100);
+}
+
+function hideAuthDialog() {
+  $('auth-dialog').hidden = true;
+  $('auth-error').hidden = true;
+}
+
+$('auth-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const code = $('auth-code').value.trim();
+  if (code.length === 6) {
+    $('auth-error').hidden = true;
+    connect(code);
+  } else {
+    showAuthDialog('Введите 6-значный код');
+  }
+});
+
+function connect(providedCode) {
+  const code = providedCode || getCode();
+  if (!code) {
+    showAuthDialog();
+    return;
+  }
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${scheme}://${location.host}/ws`);
+  const ws = new WebSocket(`${scheme}://${location.host}/ws?code=${encodeURIComponent(code)}`);
   ws.binaryType = 'arraybuffer';
   state.ws = ws;
+  let opened = false;
   setConnection('connecting');
 
   ws.onopen = () => {
+    opened = true;
     state.reconnectDelay = 500;
+    sessionStorage.setItem('streamCode', code);
+    hideAuthDialog();
     // The server starts every connection at a keyframe; frames in between were lost.
     pipeline.waitingForKeyframe = true;
     setConnection('open');
@@ -434,7 +476,12 @@ function connect() {
   ws.onclose = () => {
     if (state.ws !== ws) return;
     setConnection('closed');
-    setTimeout(connect, state.reconnectDelay);
+    if (!opened) {
+      sessionStorage.removeItem('streamCode');
+      showAuthDialog('Неверный код подключения');
+      return;
+    }
+    setTimeout(() => connect(code), state.reconnectDelay);
     state.reconnectDelay = Math.min(state.reconnectDelay * 2, 5000);
   };
 }
