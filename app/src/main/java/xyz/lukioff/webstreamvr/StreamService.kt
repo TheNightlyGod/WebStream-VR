@@ -39,6 +39,7 @@ data class StreamStatus(
     val viewers: Int = 0,
     val urls: List<String> = emptyList(),
     val webError: String? = null,
+    val streamCode: String? = null,
 )
 
 /**
@@ -83,6 +84,8 @@ class StreamService : Service(), HeadsetLink.Listener {
         super.onDestroy()
     }
 
+    private var streamCode: String? = null
+
     private fun startStreaming() {
         if (started) stopStreaming()
         started = true
@@ -91,11 +94,13 @@ class StreamService : Service(), HeadsetLink.Listener {
             buildNotification(getString(R.string.notification_starting)),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
         )
+        val code = (100000..999999).random().toString()
+        streamCode = code
         settings = StreamSettings.load(this)
         hub = ViewerHub { link.requestKeyframe() }
         link = HeadsetLink(applicationContext, this)
         acquireLocks()
-        _status.value = StreamStatus(running = true)
+        _status.value = StreamStatus(running = true, streamCode = code)
         startWebServer()
         link.start(settings.toLinkSettings())
         handler.post(tick)
@@ -104,6 +109,7 @@ class StreamService : Service(), HeadsetLink.Listener {
     private fun stopStreaming() {
         if (!started) return
         started = false
+        streamCode = null
         handler.removeCallbacks(tick)
         link.stop()
         web?.stop()
@@ -126,7 +132,7 @@ class StreamService : Service(), HeadsetLink.Listener {
     }
 
     private fun startWebServer() {
-        val server = WebServer(assets, hub, ::statusJson)
+        val server = WebServer(assets, hub, streamCode, ::statusJson)
         try {
             server.start(settings.httpPort)
             web = server

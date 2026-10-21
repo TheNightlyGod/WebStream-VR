@@ -12,6 +12,7 @@
     <string name="state_error">Нет связи со шлемом, повторяем…</string>
 
     <string name="stats_line">%1$d×%2$d · %3$.0f к/с · %4$.1f Мбит/с · зрителей: %5$d</string>
+    <string name="stream_code_label">Код подключения</string>
     <string name="open_in_browser">Откройте в браузере на устройстве в той же сети:</string>
     <string name="web_port_busy">Порт %1$d занят, выберите другой</string>
 

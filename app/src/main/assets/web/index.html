@@ -17,6 +17,18 @@
       <p id="overlay-text">Подключение…</p>
     </div>
 
+    <div id="auth-dialog" class="auth-dialog" hidden>
+      <div class="auth-card">
+        <h2 class="auth-title">Код подключения</h2>
+        <p class="auth-subtitle">Введите 6-значный код, отображаемый на экране приложения WebStream-VR</p>
+        <form id="auth-form" autocomplete="off">
+          <input id="auth-code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000" autocomplete="off" aria-label="Код подключения">
+          <button type="submit" class="auth-btn">Подключиться</button>
+        </form>
+        <p id="auth-error" class="auth-error" hidden>Неверный код подключения</p>
+      </div>
+    </div>
+
     <header class="bar top">
       <div id="status" class="status" role="status" aria-live="polite">
         <span class="dot" aria-hidden="true"></span>
