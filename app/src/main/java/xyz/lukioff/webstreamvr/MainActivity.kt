@@ -24,12 +24,9 @@ import xyz.lukioff.webstreamvr.ui.theme.WebStreamVRTheme
 class MainActivity : ComponentActivity() {
     private val castPkgStateState = mutableStateOf(CastPkgState.OK)
 
+    // No auto-start after install: the stream (and the headset's capture indicator) starts only on request.
     private val installLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        val newState = castPackageState(this)
-        castPkgStateState.value = newState
-        if (newState == CastPkgState.OK) {
-            StreamService.start(this)
-        }
+        castPkgStateState.value = castPackageState(this)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,6 +51,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onStart = { StreamService.start(this) },
                         onStop = { StreamService.stop(this) },
+                        onSaveReplay = { StreamService.saveReplay(this) },
                         onInstallService = {
                             CastingServiceInstaller.install(this, installLauncher)
                         },
@@ -75,11 +73,12 @@ class MainActivity : ComponentActivity() {
     }
 
     // Lets `adb shell am start -n xyz.lukioff.webstreamvr/.MainActivity -a xyz.lukioff.webstreamvr.START`
-    // (or .STOP) control streaming without touching the panel.
+    // (or .STOP, .SAVE_REPLAY) control streaming without touching the panel.
     private fun handleAction(intent: Intent?) {
         when (intent?.action) {
             StreamService.ACTION_START -> StreamService.start(this)
             StreamService.ACTION_STOP -> StreamService.stop(this)
+            StreamService.ACTION_SAVE_REPLAY -> StreamService.saveReplay(this)
         }
     }
 }

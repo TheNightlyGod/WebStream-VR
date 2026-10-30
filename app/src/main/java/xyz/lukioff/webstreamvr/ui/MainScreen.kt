@@ -35,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,10 +62,12 @@ fun MainScreen(
     onSettingsChange: (StreamSettings) -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    onSaveReplay: () -> Unit,
     onInstallService: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var showInstallDialog by remember { mutableStateOf(false) }
+    // Offered right away on launch when the casting service is missing or outdated.
+    var showInstallDialog by rememberSaveable { mutableStateOf(castPkgState != CastPkgState.OK) }
 
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(
@@ -87,6 +90,7 @@ fun MainScreen(
                     }
                 },
                 onStop = onStop,
+                onSaveReplay = onSaveReplay,
                 onInstallService = onInstallService,
             )
             SettingsCard(settings, onSettingsChange)
@@ -132,6 +136,7 @@ private fun StatusCard(
     castPkgState: CastPkgState,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    onSaveReplay: () -> Unit,
     onInstallService: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
@@ -202,6 +207,14 @@ private fun StatusCard(
                             }
                         }
                     }
+                }
+            }
+            status.replayMessage?.let { message ->
+                Text(message, style = MaterialTheme.typography.bodyMedium)
+            }
+            if (status.running && status.replayActive) {
+                Button(onClick = onSaveReplay, enabled = status.replaySeconds > 0 && !status.replaySaving) {
+                    Text(stringResource(R.string.replay_save_buffered, status.replaySeconds))
                 }
             }
             if (status.running) {
@@ -293,6 +306,31 @@ private fun SettingsCard(settings: StreamSettings, onChange: (StreamSettings) ->
             }
             SwitchRow(stringResource(R.string.setting_audio), settings.audio) {
                 onChange(settings.copy(audio = it))
+            }
+
+            SwitchRow(stringResource(R.string.setting_replay), settings.replayEnabled) {
+                onChange(settings.copy(replayEnabled = it))
+            }
+            if (settings.replayEnabled) {
+                Setting(
+                    stringResource(R.string.setting_replay_length),
+                    stringResource(R.string.setting_replay_hint, settings.replayMemoryBytes / 1_000_000),
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StreamSettings.REPLAY_DURATIONS.forEach { seconds ->
+                            FilterChip(
+                                selected = settings.replaySeconds == seconds,
+                                onClick = { onChange(settings.copy(replaySeconds = seconds)) },
+                                label = {
+                                    Text(
+                                        if (seconds < 60) stringResource(R.string.replay_seconds, seconds)
+                                        else stringResource(R.string.replay_minutes, seconds / 60)
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
             }
 
             Setting(stringResource(R.string.setting_port)) {

@@ -449,6 +449,7 @@ function connect(providedCode) {
     if (typeof event.data === 'string') {
       const message = JSON.parse(event.data);
       if (message.type === 'dropped') stalls.dropped();
+      else if (message.type === 'replay') handleReplay(message);
       else handleStatus(message);
       return;
     }
@@ -506,8 +507,56 @@ function handleStatus(status) {
   state.server = status;
   $('viewers').textContent = status.viewers;
   $('audio-button').hidden = !status.audio;
+  renderReplay(status);
   render();
 }
+
+// ---------------------------------------------------------------- replay
+
+const REPLAY_TEXT = {
+  saving: 'Сохраняем на шлем…',
+  busy: 'Уже сохраняется, подождите',
+  empty: 'В буфере пока ничего нет',
+  failed: 'Не удалось сохранить повтор',
+  saved: 'Сохранено на шлем, скачиваем…',
+};
+const REPLAY_LENGTHS = [30, 60, 120, 180];
+let replayNoteTimer = 0;
+
+function showReplayNote(text) {
+  clearTimeout(replayNoteTimer);
+  $('replay-note').textContent = text;
+  $('replay-note').hidden = false;
+  replayNoteTimer = setTimeout(() => { $('replay-note').hidden = true; }, 6000);
+}
+
+function renderReplay(status) {
+  const select = $('replay-seconds');
+  $('replay-button').hidden = !status.replay;
+  select.hidden = !status.replay;
+  if (!status.replay) return;
+  $('replay-button').disabled = status.replaySaving || status.replaySeconds === 0;
+  const lengths = REPLAY_LENGTHS.filter((seconds) => seconds <= status.replayMax);
+  if (select.options.length === lengths.length) return;
+  select.replaceChildren(...lengths.map((seconds) => new Option(seconds < 60 ? `${seconds} с` : `${seconds / 60} мин`, seconds)));
+  select.value = lengths[lengths.length - 1];
+}
+
+function handleReplay(message) {
+  showReplayNote(REPLAY_TEXT[message.state] || message.state);
+  if (message.state !== 'saved') return;
+  const link = document.createElement('a');
+  link.href = `/replays/${encodeURIComponent(message.name)}?code=${encodeURIComponent(getCode())}`;
+  link.download = message.name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+}
+
+$('replay-button').addEventListener('click', () => {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  state.ws.send(JSON.stringify({ type: 'saveReplay', seconds: Number($('replay-seconds').value) }));
+});
 
 function setConnection(value) {
   state.connection = value;
@@ -599,6 +648,7 @@ wake();
 document.addEventListener('keydown', (e) => {
   if (e.key === 'f' || e.key === 'а') $('fullscreen-button').click();
   if (e.key === 'm' || e.key === 'ь') $('audio-button').click();
+  if ((e.key === 'r' || e.key === 'к') && !$('replay-button').hidden) $('replay-button').click();
 });
 
 if (!MediaSourceImpl) {

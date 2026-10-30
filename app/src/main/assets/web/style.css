@@ -111,6 +111,22 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 input[type="range"] { width: 120px; accent-color: var(--accent); }
 .spacer { flex: 1; }
 
+.pill:disabled { opacity: 0.5; cursor: default; }
+.replay-seconds {
+  min-height: 36px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+  font: inherit;
+}
+.replay-note {
+  color: var(--muted);
+  font-size: 13px;
+  text-align: right;
+}
+
 .stats {
   position: absolute;
   top: 64px;
@@ -159,6 +175,10 @@ input[type="range"] { width: 120px; accent-color: var(--accent); }
 @media (max-width: 520px) {
   input[type="range"] { display: none; }
   .status, .viewers, .pill { font-size: 14px; padding: 6px 12px; }
+  .bar.bottom { flex-wrap: wrap; }
+  .replay-note { order: -1; flex-basis: 100%; text-align: left; }
+  /* The playback buttons keep the first row, replay gets its own below them. */
+  .replay-seconds, #replay-button { order: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {

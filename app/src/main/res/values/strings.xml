@@ -3,6 +3,13 @@
 
     <string name="action_start">Начать трансляцию</string>
     <string name="action_stop">Остановить</string>
+    <string name="action_save_replay">Сохранить повтор</string>
+    <string name="replay_save_buffered">Сохранить повтор (%1$d с)</string>
+    <string name="replay_saving">Сохраняем повтор…</string>
+    <string name="replay_saved">Повтор сохранён: %1$s</string>
+    <string name="replay_failed">Не удалось сохранить повтор</string>
+    <string name="replay_empty">В буфере повтора пока ничего нет</string>
+    <string name="replay_no_memory">Не хватило памяти на буфер повтора, трансляция идёт без него</string>
 
     <string name="state_stopped">Трансляция остановлена</string>
     <string name="state_starting">Запуск сервиса кастинга…</string>
@@ -32,6 +39,11 @@
     <string name="setting_fov_hint">0 — стандартный кадр, большие значения захватывают больше, но с искажениями по краям</string>
     <string name="setting_stabilization">Стабилизация поворотов головы</string>
     <string name="setting_audio">Передавать звук</string>
+    <string name="setting_replay">Мгновенный повтор</string>
+    <string name="setting_replay_length">Длина повтора</string>
+    <string name="setting_replay_hint">Держит конец трансляции в памяти шлема, до %1$d МБ. Сохранить можно из приложения, уведомления или со страницы просмотра. Файлы лежат в Movies/Replays. Смена настройки очищает буфер.</string>
+    <string name="replay_seconds">%1$d с</string>
+    <string name="replay_minutes">%1$d мин</string>
     <string name="setting_port">Порт веб-сервера</string>
     <string name="setting_port_invalid">Порт от 1024 до 65535</string>
 

@@ -60,8 +60,17 @@ class HeadsetLink(private val context: Context, private val listener: Listener) 
         val stopService = everConnected
         io.execute {
             s?.sendQuietly(MagicMessages.stopCasting())
-            s?.close()
             thread?.interrupt()
+            if (stopService) {
+                // The service tells com.oculus.systemdriver to stop capturing through an async
+                // broadcast queue. Killing it before that broadcast goes out leaves the capture
+                // (and its red indicator) on until reboot, so give it time to finish.
+                try {
+                    Thread.sleep(STOP_GRACE_MS)
+                } catch (_: InterruptedException) {
+                }
+            }
+            s?.close()
             // Leave nothing half-initialized behind for the next start (see runSession).
             if (stopService) CastingServiceControl.stopService(context)
         }
@@ -326,6 +335,7 @@ class HeadsetLink(private val context: Context, private val listener: Listener) 
         private const val CONNECT_ATTEMPTS = 4
         private const val CONNECT_WAIT_MS = 3000
         private const val SECOND_SOCKET_WAIT_MS = 3000
+        private const val STOP_GRACE_MS = 1500L
         private const val RESYNC_MIN_INTERVAL_MS = 300L
     }
 }

@@ -15,14 +15,19 @@ import java.util.concurrent.Executors
 
 /**
  * Tiny HTTP/1.1 server: static viewer files from assets/web, a JSON status
- * endpoint and the WebSocket stream at /ws. One thread per connection.
+ * endpoint, saved replays at /replays and the WebSocket stream at /ws. One thread
+ * per connection.
  */
 class WebServer(
     private val assets: AssetManager,
     private val hub: ViewerHub,
     private val streamCode: String? = null,
+    private val openReplay: (String) -> Download? = { null },
     private val statusJson: () -> String,
 ) {
+    /** A file to send as a download. [open] may throw IOException if it has gone. */
+    class Download(val name: String, val size: Long, val open: () -> InputStream)
+
     private var server: ServerSocket? = null
     private var pool: ExecutorService? = null
     private val cache = HashMap<String, ByteArray>()
@@ -103,11 +108,44 @@ class WebServer(
                         respond(output, 200, "application/json; charset=utf-8", statusJson().toByteArray(), request.method)
                     }
                 }
+                path.startsWith("/replays/") -> {
+                    val code = getQueryParam(request.path, "code")
+                    if (streamCode != null && code != streamCode) {
+                        respond(output, 401, "text/plain; charset=utf-8", "Unauthorized: Invalid code".toByteArray(), request.method)
+                    } else {
+                        serveReplay(output, path.removePrefix("/replays/"), request.method)
+                    }
+                }
                 else -> serveAsset(output, path, request.method)
             }
         } catch (_: IOException) {
         } finally {
             if (!upgraded) runCatching { client.close() }
+        }
+    }
+
+    /** Streams from disk: a replay can be hundreds of megabytes, so it never goes through [respond]. */
+    private fun serveReplay(output: OutputStream, name: String, method: String) {
+        val replay = openReplay(name)
+        val file = try {
+            replay?.open()
+        } catch (_: IOException) {
+            null
+        }
+        if (replay == null || file == null) {
+            respond(output, 404, "text/plain; charset=utf-8", "Not found".toByteArray(), method)
+            return
+        }
+        file.use {
+            val head = "HTTP/1.1 200 OK\r\n" +
+                "Content-Type: video/mp4\r\n" +
+                "Content-Length: ${replay.size}\r\n" +
+                "Content-Disposition: attachment; filename=\"${replay.name}\"\r\n" +
+                "Cache-Control: no-store\r\n" +
+                "Connection: close\r\n\r\n"
+            output.write(head.toByteArray())
+            if (method != "HEAD") it.copyTo(output, 64 * 1024)
+            output.flush()
         }
     }
 
@@ -140,6 +178,7 @@ class WebServer(
         val reason = when (status) {
             200 -> "OK"
             400 -> "Bad Request"
+            401 -> "Unauthorized"
             404 -> "Not Found"
             405 -> "Method Not Allowed"
             else -> "Error"

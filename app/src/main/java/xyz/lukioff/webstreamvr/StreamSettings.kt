@@ -31,9 +31,14 @@ data class StreamSettings(
     val bitrateMbps: Int = 8,
     val audio: Boolean = true,
     val httpPort: Int = DEFAULT_PORT,
+    /** Keeps the last [replaySeconds] of the stream in memory, ready to save. */
+    val replayEnabled: Boolean = false,
+    val replaySeconds: Int = 120,
 ) {
     /** Encoder size for this device; keeps the aspect ratio when it has to shrink. */
     val frameSize: Pair<Int, Int> get() = frameSize(aspect, quality, maxEncoderPixels())
+
+    val replayMemoryBytes: Int get() = replayMemoryBytes(bitrateMbps, replaySeconds)
 
     fun toLinkSettings(): HeadsetLink.Settings {
         val (width, height) = frameSize
@@ -57,8 +62,23 @@ data class StreamSettings(
         val BITRATES_MBPS = listOf(0, 4, 6, 8, 12, 16, 20)
         val FRAME_RATES = listOf(30, 60)
         const val MAX_FOV_ADJUSTMENT = 60
+        val REPLAY_DURATIONS = listOf(30, 60, 120, 180)
 
         private const val PREFS = "stream_settings"
+        // The top of what "Auto" uses, see setting_bitrate_hint.
+        private const val AUTO_BITRATE_MBPS = 20
+        private const val PCM_BYTES_PER_SECOND = 192_000L
+        private const val MAX_REPLAY_BYTES = 512L * 1024 * 1024
+
+        /**
+         * Memory for [seconds] of stream with a quarter to spare: the encoder overshoots
+         * its bitrate, and the stream keeps arriving while a save reads the old data.
+         */
+        fun replayMemoryBytes(bitrateMbps: Int, seconds: Int): Int {
+            val mbps = if (bitrateMbps == 0) AUTO_BITRATE_MBPS else bitrateMbps
+            val bytesPerSecond = mbps * 125_000L + PCM_BYTES_PER_SECOND
+            return (bytesPerSecond * seconds * 5 / 4).coerceAtMost(MAX_REPLAY_BYTES).toInt()
+        }
 
         /**
          * Width and height for [aspect] with [shortSide] pixels on the short side, scaled
@@ -114,6 +134,8 @@ data class StreamSettings(
                 bitrateMbps = p.getInt("bitrateMbps", defaults.bitrateMbps),
                 audio = p.getBoolean("audio", defaults.audio),
                 httpPort = httpPort,
+                replayEnabled = p.getBoolean("replayEnabled", defaults.replayEnabled),
+                replaySeconds = p.getInt("replaySeconds", defaults.replaySeconds).takeIf { it in REPLAY_DURATIONS } ?: defaults.replaySeconds,
             )
         }
 
@@ -129,6 +151,8 @@ data class StreamSettings(
                 putInt("bitrateMbps", settings.bitrateMbps)
                 putBoolean("audio", settings.audio)
                 putInt("httpPort", settings.httpPort)
+                putBoolean("replayEnabled", settings.replayEnabled)
+                putInt("replaySeconds", settings.replaySeconds)
             }
         }
     }

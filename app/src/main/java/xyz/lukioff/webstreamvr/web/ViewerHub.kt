@@ -30,6 +30,13 @@ class ViewerHub(private val requestKeyframe: () -> Unit) {
     private val nextId = AtomicInteger(1)
     @Volatile private var configFrame: ByteArray? = null
 
+    /** The latest SPS/PPS in Annex-B form, for whoever joins the stream after the encoder sent them. */
+    @Volatile var parameterSets: ByteArray? = null
+        private set
+
+    /** A viewer asked to save a replay: seconds (null = the full buffer) and a way to answer that viewer. */
+    @Volatile var onSaveReplay: ((Int?, (String) -> Unit) -> Unit)? = null
+
     private val frameCounter = AtomicInteger()
     private val byteCounter = AtomicLong()
     @Volatile var fps = 0f
@@ -46,6 +53,7 @@ class ViewerHub(private val requestKeyframe: () -> Unit) {
             // The encoder emits SPS/PPS once per (re)configuration; viewers need them to set up decoding.
             val frame = WebSocket.frame(WebSocket.OPCODE_BINARY, header(TYPE_CONFIG, 0, 0, 0, timestampUs), data, offset, length)
             configFrame = frame
+            parameterSets = data.copyOfRange(offset, offset + length)
             for (viewer in viewers) {
                 viewer.waitingForKeyframe = true
                 viewer.send(frame, essential = true)
@@ -105,6 +113,7 @@ class ViewerHub(private val requestKeyframe: () -> Unit) {
     /** Forgets codec state; call when the headset connection restarts. */
     fun resetStream() {
         configFrame = null
+        parameterSets = null
         for (viewer in viewers) viewer.waitingForKeyframe = true
     }
 
@@ -122,10 +131,16 @@ class ViewerHub(private val requestKeyframe: () -> Unit) {
                 when (message.opcode) {
                     WebSocket.OPCODE_CLOSE -> break
                     WebSocket.OPCODE_PING -> viewer.send(WebSocket.frame(WebSocket.OPCODE_PONG, null, message.payload), essential = true)
-                    WebSocket.OPCODE_TEXT -> if (String(message.payload).contains("\"keyframe\"")) {
-                        viewer.waitingForKeyframe = true
-                        configFrame?.let { viewer.send(it, essential = true) }
-                        requestKeyframe()
+                    WebSocket.OPCODE_TEXT -> {
+                        val text = String(message.payload)
+                        if (text.contains("\"keyframe\"")) {
+                            viewer.waitingForKeyframe = true
+                            configFrame?.let { viewer.send(it, essential = true) }
+                            requestKeyframe()
+                        } else if (text.contains("\"saveReplay\"")) {
+                            val seconds = REPLAY_SECONDS.find(text)?.groupValues?.get(1)?.toIntOrNull()
+                            onSaveReplay?.invoke(seconds) { json -> viewer.send(WebSocket.textFrame(json), essential = true) }
+                        }
                     }
                 }
             }
@@ -206,6 +221,7 @@ class ViewerHub(private val requestKeyframe: () -> Unit) {
         private const val MAX_QUEUED_MESSAGES = 90
         private const val MAX_QUEUED_BYTES = 3L * 1024 * 1024
         private val DROPPED_NOTICE = WebSocket.textFrame("""{"type":"dropped"}""")
+        private val REPLAY_SECONDS = Regex("\"seconds\"\\s*:\\s*(\\d{1,4})")
 
         fun header(type: Int, flags: Int, channels: Int, sampleRate: Int, timestampUs: Long): ByteArray =
             ByteBuffer.allocate(16)

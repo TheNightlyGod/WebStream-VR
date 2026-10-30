@@ -51,4 +51,28 @@ class WebTest {
         assertTrue(slice.hasSlice)
         assertFalse(slice.isKeyframe)
     }
+
+    @Test
+    fun extractsParameterSetsWithFourByteStartCodes() {
+        val data = byteArrayOf(0, 0, 1, 0x67, 0x64, 0x11, 0, 0, 0, 1, 0x68, 0x22, 0, 0, 1, 0x65, 0x33)
+        val sets = H264.parameterSets(data, 0, data.size)!!
+        assertArrayEquals(byteArrayOf(0, 0, 0, 1, 0x67, 0x64, 0x11), sets.sps)
+        assertArrayEquals(byteArrayOf(0, 0, 0, 1, 0x68, 0x22), sets.pps)
+    }
+
+    @Test
+    fun parameterSetsNeedBothUnits() {
+        val data = byteArrayOf(0, 0, 0, 1, 0x67, 0x64)
+        assertEquals(null, H264.parameterSets(data, 0, data.size))
+    }
+
+    @Test
+    fun readsFrameSizeFromSps() {
+        // x264 High profile 1920×1080: 68 macroblock rows cropped by 8 lines, with emulation prevention bytes.
+        val sps = intArrayOf(
+            0, 0, 0, 1, 0x67, 0x64, 0x00, 0x28, 0xAC, 0xD9, 0x40, 0x78, 0x02, 0x27, 0xE5, 0x84,
+            0x00, 0x00, 0x03, 0x00, 0x04, 0x00, 0x00, 0x03, 0x00, 0xF0, 0x3C, 0x60, 0xC6, 0x58,
+        ).map(Int::toByte).toByteArray()
+        assertEquals(1920 to 1080, H264.frameSize(sps))
+    }
 }

@@ -22,7 +22,15 @@ class WebServerTest {
     fun setUp() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         hub = ViewerHub {}
-        server = WebServer(context.assets, hub, streamCode = "123456") { """{"type":"status"}""" }
+        val replay = "mp4 bytes".toByteArray()
+        server = WebServer(
+            context.assets,
+            hub,
+            streamCode = "123456",
+            openReplay = { name ->
+                if (name == "replay.mp4") WebServer.Download(name, replay.size.toLong()) { replay.inputStream() } else null
+            },
+        ) { """{"type":"status"}""" }
         port = (20000..60000).random()
         server.start(port)
     }
@@ -86,5 +94,32 @@ class WebServerTest {
             val statusLine = reader.readLine()
             assertTrue("Expected 200 for status API with valid code, got: $statusLine", statusLine.contains("200"))
         }
+    }
+
+    private fun get(path: String): List<String> =
+        Socket("127.0.0.1", port).use { socket ->
+            socket.getOutputStream().write("GET $path HTTP/1.1\r\nHost: localhost\r\n\r\n".toByteArray())
+            BufferedReader(InputStreamReader(socket.getInputStream())).readLines()
+        }
+
+    @Test
+    fun rejectsReplayDownloadWithoutCode() {
+        val statusLine = get("/replays/replay.mp4?code=wrong").first()
+        assertTrue("Expected 401, got: $statusLine", statusLine.contains("401"))
+    }
+
+    @Test
+    fun servesReplayAsAttachment() {
+        val response = get("/replays/replay.mp4?code=123456")
+        assertTrue(response.first().contains("200"))
+        assertTrue(response.contains("Content-Disposition: attachment; filename=\"replay.mp4\""))
+        assertTrue(response.contains("Content-Length: 9"))
+        assertTrue(response.last() == "mp4 bytes")
+    }
+
+    @Test
+    fun unknownReplayIsNotFound() {
+        val statusLine = get("/replays/other.mp4?code=123456").first()
+        assertTrue("Expected 404, got: $statusLine", statusLine.contains("404"))
     }
 }

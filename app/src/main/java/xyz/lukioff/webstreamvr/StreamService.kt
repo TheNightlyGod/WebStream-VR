@@ -21,11 +21,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import org.json.JSONObject
 import xyz.lukioff.webstreamvr.cast.HeadsetLink
+import xyz.lukioff.webstreamvr.replay.ReplayRecorder
+import xyz.lukioff.webstreamvr.replay.SavedReplay
 import xyz.lukioff.webstreamvr.web.ViewerHub
 import xyz.lukioff.webstreamvr.web.WebServer
 import java.io.IOException
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import java.util.concurrent.ConcurrentHashMap
 
 /** What the UI shows; published by [StreamService]. */
 data class StreamStatus(
@@ -40,6 +43,10 @@ data class StreamStatus(
     val urls: List<String> = emptyList(),
     val webError: String? = null,
     val streamCode: String? = null,
+    val replayActive: Boolean = false,
+    val replaySeconds: Int = 0,
+    val replaySaving: Boolean = false,
+    val replayMessage: String? = null,
 )
 
 /**
@@ -51,6 +58,11 @@ class StreamService : Service(), HeadsetLink.Listener {
     private lateinit var hub: ViewerHub
     private lateinit var link: HeadsetLink
     private var web: WebServer? = null
+    @Volatile private var replay: ReplayRecorder? = null
+    // Only files from this stream can be downloaded, and only by name from this map.
+    private val savedReplays = ConcurrentHashMap<String, SavedReplay>()
+    private var keyframeTicks = 0
+    private var notificationText = ""
     private var wifiLock: WifiManager.WifiLock? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -59,11 +71,17 @@ class StreamService : Service(), HeadsetLink.Listener {
     private val tick = object : Runnable {
         override fun run() {
             hub.updateStats()
-            _status.update { it.copy(fps = hub.fps, kbps = hub.kbps, viewers = hub.viewerCount) }
+            val recorder = replay
+            // The encoder makes keyframes only on request, and a replay can only start at one.
+            if (recorder != null && ++keyframeTicks % REPLAY_KEYFRAME_TICKS == 0) link.requestKeyframe()
+            val replaySeconds = recorder?.buffer?.bufferedSeconds() ?: 0
+            _status.update { it.copy(fps = hub.fps, kbps = hub.kbps, viewers = hub.viewerCount, replaySeconds = replaySeconds) }
             hub.broadcastText(statusJson())
             handler.postDelayed(this, 1000)
         }
     }
+
+    private val restoreNotification = Runnable { updateNotification(notificationText) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -74,6 +92,7 @@ class StreamService : Service(), HeadsetLink.Listener {
                 stopSelf()
             }
             ACTION_APPLY -> if (started) applySettings()
+            ACTION_SAVE_REPLAY -> if (started) saveReplay(null)
             else -> startStreaming()
         }
         return START_NOT_STICKY
@@ -94,13 +113,16 @@ class StreamService : Service(), HeadsetLink.Listener {
             buildNotification(getString(R.string.notification_starting)),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
         )
+        notificationText = getString(R.string.notification_starting)
         val code = (100000..999999).random().toString()
         streamCode = code
         settings = StreamSettings.load(this)
         hub = ViewerHub { link.requestKeyframe() }
+        hub.onSaveReplay = ::saveReplay
         link = HeadsetLink(applicationContext, this)
         acquireLocks()
         _status.value = StreamStatus(running = true, streamCode = code)
+        restartReplay()
         startWebServer()
         link.start(settings.toLinkSettings())
         handler.post(tick)
@@ -111,9 +133,13 @@ class StreamService : Service(), HeadsetLink.Listener {
         started = false
         streamCode = null
         handler.removeCallbacks(tick)
+        handler.removeCallbacks(restoreNotification)
         link.stop()
         web?.stop()
         web = null
+        replay?.close()
+        replay = null
+        savedReplays.clear()
         releaseLocks()
         _status.value = StreamStatus()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -122,8 +148,15 @@ class StreamService : Service(), HeadsetLink.Listener {
     private fun applySettings() {
         val newSettings = StreamSettings.load(this)
         val portChanged = newSettings.httpPort != settings.httpPort
+        val replayChanged = newSettings.replayEnabled != settings.replayEnabled ||
+            newSettings.replaySeconds != settings.replaySeconds ||
+            newSettings.replayMemoryBytes != settings.replayMemoryBytes
         settings = newSettings
         link.update(newSettings.toLinkSettings())
+        if (replayChanged) {
+            restartReplay()
+            updateNotification(notificationText)
+        }
         if (portChanged) {
             web?.stop()
             web = null
@@ -131,14 +164,78 @@ class StreamService : Service(), HeadsetLink.Listener {
         }
     }
 
+    /** Sets the replay buffer up for the current settings; what it held so far is lost. */
+    private fun restartReplay() {
+        replay?.close()
+        val recorder = if (settings.replayEnabled) {
+            ReplayRecorder.create(contentResolver, settings.replaySeconds, settings.replayMemoryBytes)
+        } else {
+            null
+        }
+        // The encoder sends parameter sets once, and a buffer started mid-stream needs them too.
+        hub.parameterSets?.let { recorder?.buffer?.onVideo(it, 0, it.size, 0) }
+        replay = recorder
+        val message = if (settings.replayEnabled && recorder == null) getString(R.string.replay_no_memory) else null
+        _status.update { it.copy(replayActive = recorder != null, replaySeconds = 0, replaySaving = false, replayMessage = message) }
+    }
+
+    /** Saves the newest [seconds] (null = the full buffer); [reply] gets progress as JSON for a viewer. */
+    private fun saveReplay(seconds: Int?, reply: (String) -> Unit = {}) {
+        val recorder = replay
+        if (recorder == null) {
+            reply(replayJson("empty"))
+            return
+        }
+        val limit = settings.replaySeconds
+        val durationUs = (seconds ?: limit).coerceIn(1, limit) * 1_000_000L
+        when (recorder.save(durationUs) { saved -> onReplaySaved(saved, reply) }) {
+            ReplayRecorder.SaveStart.STARTED -> {
+                _status.update { it.copy(replaySaving = true, replayMessage = getString(R.string.replay_saving)) }
+                showBriefly(getString(R.string.replay_saving))
+                reply(replayJson("saving"))
+            }
+            ReplayRecorder.SaveStart.BUSY -> reply(replayJson("busy"))
+            ReplayRecorder.SaveStart.EMPTY -> {
+                _status.update { it.copy(replayMessage = getString(R.string.replay_empty)) }
+                showBriefly(getString(R.string.replay_empty))
+                reply(replayJson("empty"))
+            }
+        }
+    }
+
+    private fun onReplaySaved(saved: SavedReplay?, reply: (String) -> Unit) {
+        if (saved != null) savedReplays[saved.name] = saved
+        reply(if (saved != null) replayJson("saved", saved) else replayJson("failed"))
+        if (!started) return
+        val message = if (saved != null) getString(R.string.replay_saved, saved.name) else getString(R.string.replay_failed)
+        _status.update { it.copy(replaySaving = false, replayMessage = message) }
+        showBriefly(message)
+    }
+
+    private fun replayJson(state: String, saved: SavedReplay? = null): String =
+        JSONObject()
+            .put("type", "replay")
+            .put("state", state)
+            .put("name", saved?.name ?: JSONObject.NULL)
+            .put("size", saved?.size ?: 0)
+            .toString()
+
+    private fun openReplay(name: String): WebServer.Download? {
+        val saved = savedReplays[name] ?: return null
+        return WebServer.Download(saved.name, saved.size) {
+            contentResolver.openInputStream(saved.uri) ?: throw IOException("Cannot open ${saved.uri}")
+        }
+    }
+
     private fun startWebServer() {
-        val server = WebServer(assets, hub, streamCode, ::statusJson)
+        val server = WebServer(assets, hub, streamCode, ::openReplay, ::statusJson)
         try {
             server.start(settings.httpPort)
             web = server
             val urls = localAddresses().map { "http://$it:${settings.httpPort}" }
             _status.update { it.copy(urls = urls, webError = null) }
-            updateNotification(urls.firstOrNull() ?: getString(R.string.notification_no_network))
+            notificationText = urls.firstOrNull() ?: getString(R.string.notification_no_network)
+            updateNotification(notificationText)
         } catch (e: IOException) {
             Log.e(TAG, "Web server failed", e)
             _status.update { it.copy(urls = emptyList(), webError = getString(R.string.web_port_busy, settings.httpPort)) }
@@ -149,7 +246,10 @@ class StreamService : Service(), HeadsetLink.Listener {
 
     override fun onStateChanged(state: HeadsetLink.State, detail: String?) {
         if (!started) return
-        if (state == HeadsetLink.State.STARTING) hub.resetStream()
+        if (state == HeadsetLink.State.STARTING) {
+            hub.resetStream()
+            replay?.buffer?.onStreamRestart()
+        }
         _status.update { it.copy(headset = state, detail = detail) }
     }
 
@@ -158,11 +258,15 @@ class StreamService : Service(), HeadsetLink.Listener {
         _status.update { it.copy(width = width, height = height) }
     }
 
-    override fun onVideo(data: ByteArray, offset: Int, length: Int, timestampUs: Long) =
+    override fun onVideo(data: ByteArray, offset: Int, length: Int, timestampUs: Long) {
+        replay?.buffer?.onVideo(data, offset, length, timestampUs)
         hub.onVideo(data, offset, length, timestampUs)
+    }
 
-    override fun onAudio(data: ByteArray, offset: Int, length: Int, timestampUs: Long) =
+    override fun onAudio(data: ByteArray, offset: Int, length: Int, timestampUs: Long) {
+        replay?.buffer?.onAudio(data, offset, length, timestampUs)
         hub.onAudio(data, offset, length, timestampUs)
+    }
 
     private fun statusJson(): String {
         val s = _status.value
@@ -176,6 +280,10 @@ class StreamService : Service(), HeadsetLink.Listener {
             .put("kbps", s.kbps)
             .put("viewers", s.viewers)
             .put("audio", settings.audio)
+            .put("replay", s.replayActive)
+            .put("replayMax", settings.replaySeconds)
+            .put("replaySeconds", s.replaySeconds)
+            .put("replaySaving", s.replaySaving)
             .toString()
     }
 
@@ -212,12 +320,19 @@ class StreamService : Service(), HeadsetLink.Listener {
         val stop = PendingIntent.getService(
             this, 1, Intent(this, StreamService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE,
         )
-        return Notification.Builder(this, CHANNEL_ID)
+        val builder = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_stream)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(text)
             .setContentIntent(open)
             .setOngoing(true)
+        if (replay != null) {
+            val save = PendingIntent.getService(
+                this, 2, Intent(this, StreamService::class.java).setAction(ACTION_SAVE_REPLAY), PendingIntent.FLAG_IMMUTABLE,
+            )
+            builder.addAction(Notification.Action.Builder(null, getString(R.string.action_save_replay), save).build())
+        }
+        return builder
             .addAction(Notification.Action.Builder(null, getString(R.string.action_stop), stop).build())
             .build()
     }
@@ -226,13 +341,23 @@ class StreamService : Service(), HeadsetLink.Listener {
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(text))
     }
 
+    /** Shows [text] in the notification for a few seconds, then goes back to the address. */
+    private fun showBriefly(text: String) {
+        handler.removeCallbacks(restoreNotification)
+        updateNotification(text)
+        handler.postDelayed(restoreNotification, BRIEF_NOTIFICATION_MS)
+    }
+
     companion object {
         private const val TAG = "StreamService"
         private const val CHANNEL_ID = "stream"
         private const val NOTIFICATION_ID = 1
+        private const val REPLAY_KEYFRAME_TICKS = 2
+        private const val BRIEF_NOTIFICATION_MS = 4000L
         const val ACTION_START = "xyz.lukioff.webstreamvr.START"
         const val ACTION_STOP = "xyz.lukioff.webstreamvr.STOP"
         const val ACTION_APPLY = "xyz.lukioff.webstreamvr.APPLY"
+        const val ACTION_SAVE_REPLAY = "xyz.lukioff.webstreamvr.SAVE_REPLAY"
 
         private val _status = MutableStateFlow(StreamStatus())
         val status: StateFlow<StreamStatus> = _status.asStateFlow()
@@ -249,6 +374,13 @@ class StreamService : Service(), HeadsetLink.Listener {
         fun apply(context: Context) {
             if (_status.value.running) {
                 context.startService(Intent(context, StreamService::class.java).setAction(ACTION_APPLY))
+            }
+        }
+
+        /** Saves the whole replay buffer of a running stream. */
+        fun saveReplay(context: Context) {
+            if (_status.value.running) {
+                context.startService(Intent(context, StreamService::class.java).setAction(ACTION_SAVE_REPLAY))
             }
         }
 
