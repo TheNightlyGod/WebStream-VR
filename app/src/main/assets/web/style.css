@@ -132,6 +132,19 @@ input[type="range"] { width: 120px; accent-color: var(--accent); }
 .stats div.wide dd { color: var(--muted); font-size: 13px; }
 .stats dt { color: var(--muted); }
 .stats dd { margin: 0; }
+.stats-link {
+  color: var(--accent);
+  font-size: 13px;
+  text-decoration: none;
+  margin-top: 2px;
+}
+.stats-link:hover { text-decoration: underline; }
+.overlay-logs {
+  pointer-events: auto;
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 14px;
+}
 
 .overlay {
   position: absolute;

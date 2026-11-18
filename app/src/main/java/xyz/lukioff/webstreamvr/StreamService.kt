@@ -14,13 +14,13 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
-import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import org.json.JSONObject
 import xyz.lukioff.webstreamvr.cast.HeadsetLink
+import xyz.lukioff.webstreamvr.diag.AppLog
 import xyz.lukioff.webstreamvr.web.ViewerHub
 import xyz.lukioff.webstreamvr.web.WebServer
 import java.io.IOException
@@ -67,7 +67,14 @@ class StreamService : Service(), HeadsetLink.Listener {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onCreate() {
+        super.onCreate()
+        AppLog.init(applicationContext)
+        AppLog.i(TAG, "StreamService onCreate")
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        AppLog.i(TAG, "onStartCommand: action=${intent?.action} flags=$flags startId=$startId started=$started")
         when (intent?.action) {
             ACTION_STOP -> {
                 stopStreaming()
@@ -80,6 +87,7 @@ class StreamService : Service(), HeadsetLink.Listener {
     }
 
     override fun onDestroy() {
+        AppLog.i(TAG, "StreamService onDestroy (started=$started)")
         stopStreaming()
         super.onDestroy()
     }
@@ -88,16 +96,34 @@ class StreamService : Service(), HeadsetLink.Listener {
 
     private fun startStreaming() {
         if (started) stopStreaming()
+        AppLog.i(TAG, "Starting streaming foreground service")
+        try {
+            startForeground(
+                NOTIFICATION_ID,
+                buildNotification(getString(R.string.notification_starting)),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+            )
+        } catch (e: Exception) {
+            AppLog.e(TAG, "startForeground failed", e)
+            _status.value = StreamStatus(
+                running = false,
+                headset = HeadsetLink.State.ERROR,
+                detail = "${e.javaClass.simpleName}: ${e.message}",
+            )
+            stopSelf()
+            return
+        }
         started = true
-        startForeground(
-            NOTIFICATION_ID,
-            buildNotification(getString(R.string.notification_starting)),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
-        )
         val code = (100000..999999).random().toString()
         streamCode = code
         settings = StreamSettings.load(this)
-        hub = ViewerHub { link.requestKeyframe() }
+        AppLog.i(
+            TAG,
+            "Loaded settings: aspect=${settings.aspect} quality=${settings.quality} (${settings.frameSize.first}x${settings.frameSize.second}) " +
+                "fps=${settings.frameRate} bitrateMbps=${settings.bitrateMbps} fov=${settings.fovAdjustment} " +
+                "eye=${settings.eye} stab=${settings.stabilization} audio=${settings.audio} port=${settings.httpPort}"
+        )
+        hub = ViewerHub { if (::link.isInitialized) link.requestKeyframe() }
         link = HeadsetLink(applicationContext, this)
         acquireLocks()
         _status.value = StreamStatus(running = true, streamCode = code)
@@ -108,22 +134,29 @@ class StreamService : Service(), HeadsetLink.Listener {
 
     private fun stopStreaming() {
         if (!started) return
+        AppLog.i(TAG, "Stopping streaming")
         started = false
         streamCode = null
         handler.removeCallbacks(tick)
-        link.stop()
+        if (::link.isInitialized) link.stop()
         web?.stop()
         web = null
         releaseLocks()
         _status.value = StreamStatus()
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+            .onFailure { AppLog.w(TAG, "stopForeground failed", it) }
     }
 
     private fun applySettings() {
         val newSettings = StreamSettings.load(this)
         val portChanged = newSettings.httpPort != settings.httpPort
+        AppLog.i(
+            TAG,
+            "Applying settings (portChanged=$portChanged): ${newSettings.frameSize.first}x${newSettings.frameSize.second} " +
+                "fps=${newSettings.frameRate} bitrateMbps=${newSettings.bitrateMbps} audio=${newSettings.audio} port=${newSettings.httpPort}"
+        )
         settings = newSettings
-        link.update(newSettings.toLinkSettings())
+        if (::link.isInitialized) link.update(newSettings.toLinkSettings())
         if (portChanged) {
             web?.stop()
             web = null
@@ -132,15 +165,22 @@ class StreamService : Service(), HeadsetLink.Listener {
     }
 
     private fun startWebServer() {
-        val server = WebServer(assets, hub, streamCode, ::statusJson)
+        val server = WebServer(
+            assets = assets,
+            hub = hub,
+            streamCode = streamCode,
+            logReport = { AppLog.buildReport(applicationContext) },
+            statusJson = ::statusJson,
+        )
         try {
             server.start(settings.httpPort)
             web = server
             val urls = localAddresses().map { "http://$it:${settings.httpPort}" }
+            AppLog.i(TAG, "WebServer started on port ${settings.httpPort}, urls=$urls")
             _status.update { it.copy(urls = urls, webError = null) }
             updateNotification(urls.firstOrNull() ?: getString(R.string.notification_no_network))
         } catch (e: IOException) {
-            Log.e(TAG, "Web server failed", e)
+            AppLog.e(TAG, "Web server failed on port ${settings.httpPort}", e)
             _status.update { it.copy(urls = emptyList(), webError = getString(R.string.web_port_busy, settings.httpPort)) }
         }
     }
@@ -149,12 +189,14 @@ class StreamService : Service(), HeadsetLink.Listener {
 
     override fun onStateChanged(state: HeadsetLink.State, detail: String?) {
         if (!started) return
-        if (state == HeadsetLink.State.STARTING) hub.resetStream()
+        AppLog.i(TAG, "Headset state -> $state${if (detail != null) " ($detail)" else ""}")
+        if (state == HeadsetLink.State.STARTING && ::hub.isInitialized) hub.resetStream()
         _status.update { it.copy(headset = state, detail = detail) }
     }
 
     override fun onLayerConfigured(width: Int, height: Int) {
         if (!started) return
+        AppLog.i(TAG, "Layer configured: ${width}x${height}")
         _status.update { it.copy(width = width, height = height) }
     }
 
@@ -182,22 +224,26 @@ class StreamService : Service(), HeadsetLink.Listener {
     // Held for the whole stream and released in stopStreaming(); a timeout would cut long sessions.
     @SuppressLint("WakelockTimeout")
     private fun acquireLocks() {
-        val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "WebStreamVR:wifi").apply {
-            setReferenceCounted(false)
-            acquire()
-        }
-        val power = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WebStreamVR:stream").apply {
-            setReferenceCounted(false)
-            acquire()
-        }
+        runCatching {
+            val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            wifiLock = wifi.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "WebStreamVR:wifi").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }.onFailure { AppLog.w(TAG, "Failed to acquire WifiLock", it) }
+        runCatching {
+            val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WebStreamVR:stream").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }.onFailure { AppLog.w(TAG, "Failed to acquire WakeLock", it) }
     }
 
     private fun releaseLocks() {
-        wifiLock?.release()
+        runCatching { wifiLock?.release() }.onFailure { AppLog.w(TAG, "Failed to release WifiLock", it) }
         wifiLock = null
-        wakeLock?.release()
+        runCatching { wakeLock?.release() }.onFailure { AppLog.w(TAG, "Failed to release WakeLock", it) }
         wakeLock = null
     }
 
@@ -223,7 +269,9 @@ class StreamService : Service(), HeadsetLink.Listener {
     }
 
     private fun updateNotification(text: String) {
-        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(text))
+        runCatching {
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(text))
+        }.onFailure { AppLog.w(TAG, "Failed to update notification", it) }
     }
 
     companion object {
@@ -238,28 +286,53 @@ class StreamService : Service(), HeadsetLink.Listener {
         val status: StateFlow<StreamStatus> = _status.asStateFlow()
 
         fun start(context: Context) {
-            context.startForegroundService(Intent(context, StreamService::class.java).setAction(ACTION_START))
+            AppLog.i(TAG, "StreamService.start() requested")
+            try {
+                context.startForegroundService(Intent(context, StreamService::class.java).setAction(ACTION_START))
+            } catch (e: Exception) {
+                AppLog.e(TAG, "Failed to start StreamService", e)
+                _status.value = StreamStatus(
+                    running = false,
+                    headset = HeadsetLink.State.ERROR,
+                    detail = "${e.javaClass.simpleName}: ${e.message}",
+                )
+            }
         }
 
         fun stop(context: Context) {
-            context.startService(Intent(context, StreamService::class.java).setAction(ACTION_STOP))
+            AppLog.i(TAG, "StreamService.stop() requested")
+            try {
+                context.startService(Intent(context, StreamService::class.java).setAction(ACTION_STOP))
+            } catch (e: Exception) {
+                AppLog.w(TAG, "Failed to stop StreamService", e)
+            }
         }
 
         /** Pushes freshly saved settings to a running stream. */
         fun apply(context: Context) {
             if (_status.value.running) {
-                context.startService(Intent(context, StreamService::class.java).setAction(ACTION_APPLY))
+                try {
+                    context.startService(Intent(context, StreamService::class.java).setAction(ACTION_APPLY))
+                } catch (e: Exception) {
+                    AppLog.w(TAG, "Failed to apply settings to StreamService", e)
+                }
             }
         }
 
         fun localAddresses(): List<String> = try {
-            NetworkInterface.getNetworkInterfaces().toList()
+            val ifaces = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
+            val addrs = ifaces
                 .filter { it.isUp && !it.isLoopback }
                 .flatMap { it.inetAddresses.toList() }
                 .filterIsInstance<Inet4Address>()
                 .filter { !it.isLoopbackAddress && !it.isLinkLocalAddress }
-                .map { it.hostAddress!! }
-        } catch (_: Exception) {
+                .mapNotNull { it.hostAddress }
+            if (addrs.isEmpty()) {
+                AppLog.w(TAG, "No non-loopback IPv4 addresses found (interfaces=${ifaces.map { "${it.name}:up=${it.isUp}" }})")
+            }
+            addrs
+        } catch (e: Exception) {
+            AppLog.w(TAG, "Failed to enumerate local addresses", e)
             emptyList()
         }
     }

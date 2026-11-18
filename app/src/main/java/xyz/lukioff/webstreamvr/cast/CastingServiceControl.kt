@@ -4,7 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.util.Log
+import xyz.lukioff.webstreamvr.diag.AppLog
 
 const val CAST_PKG = "com.oculus.magicislandcastingservice"
 const val MIN_CAST_VERSION_CODE = 839200015L // 2.0.0.0.4915
@@ -47,12 +47,14 @@ object CastingServiceControl {
         val intent = Intent(ACTION_START_SERVICE)
             .setComponent(ComponentName(PACKAGE, SERVICE))
             .putExtra("id", context.packageName)
+        AppLog.i(TAG, "Starting casting service: component=$PACKAGE/$SERVICE caller=${context.packageName}")
         return try {
-            context.startForegroundService(intent)
+            val component = context.startForegroundService(intent)
+            AppLog.i(TAG, "startForegroundService returned: $component")
             null
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to start casting service", e)
-            e.message ?: e.javaClass.simpleName
+            AppLog.e(TAG, "Failed to start casting service", e)
+            "${e.javaClass.simpleName}: ${e.message ?: "unknown"}"
         }
     }
 
@@ -62,17 +64,26 @@ object CastingServiceControl {
      */
     fun stopService(context: Context) {
         try {
-            context.stopService(Intent().setComponent(ComponentName(PACKAGE, SERVICE)))
+            val stopped = context.stopService(Intent().setComponent(ComponentName(PACKAGE, SERVICE)))
+            AppLog.i(TAG, "stopService($SERVICE) returned $stopped")
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to stop casting service", e)
+            AppLog.w(TAG, "Failed to stop casting service", e)
         }
     }
 
-    fun connect(context: Context, host: String, port: Int, sessionUuid: String) {
+    /** Sends the CONNECT broadcast; returns null on success or an error text. */
+    fun connect(context: Context, host: String, port: Int, sessionUuid: String): String? {
         val intent = Intent(ACTION_CONNECT)
             .setPackage(PACKAGE)
             .putExtra("servers", arrayOf("$host:$port"))
             .putExtra("session_uuid", sessionUuid)
-        context.sendBroadcast(intent)
+        AppLog.i(TAG, "Sending CONNECT broadcast: server=$host:$port session=$sessionUuid")
+        return try {
+            context.sendBroadcast(intent)
+            null
+        } catch (e: Exception) {
+            AppLog.e(TAG, "Failed to send CONNECT broadcast", e)
+            "${e.javaClass.simpleName}: ${e.message ?: "unknown"}"
+        }
     }
 }
