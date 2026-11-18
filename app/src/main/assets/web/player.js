@@ -440,6 +440,7 @@ function connect(providedCode) {
     opened = true;
     state.reconnectDelay = 500;
     sessionStorage.setItem('streamCode', code);
+    updateLogsLinks(code);
     hideAuthDialog();
     // The server starts every connection at a keyframe; frames in between were lost.
     pipeline.waitingForKeyframe = true;
@@ -539,6 +540,13 @@ function render() {
   $('status').classList.toggle('live', live);
   $('overlay').hidden = live;
   $('overlay-text').textContent = s && s.detail && !live ? `${text}. ${s.detail}` : text;
+  $('overlay-logs').hidden = !(state.connection === 'open' && s && s.state === 'ERROR');
+}
+
+function updateLogsLinks(code) {
+  const href = `/api/logs?code=${encodeURIComponent(code)}`;
+  $('stats-logs').href = href;
+  $('overlay-logs').href = href;
 }
 
 function showMessage(text) {

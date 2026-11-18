@@ -137,6 +137,25 @@ class ProtocolTest {
         assertTrue(message.data.size - message.offset == 5)
     }
 
+    @Test
+    fun rejectsMalformedMagicStringLengthWithDiagnosticMessage() {
+        // Handshake with bogus string length 0x7fffffff.
+        val bytes = hex("00000001" + "00000001" + "7fffffff")
+        val error = try {
+            IncomingMagic.parse(bytes)
+            null
+        } catch (e: IllegalArgumentException) {
+            e
+        }
+        assertTrue(error != null && error.message!!.contains("type=1"))
+    }
+
+    @Test
+    fun assemblerDropsUnexpectedPayloadWithoutCrashingInJvmTests() {
+        val assembler = MagicDatagramAssembler()
+        assertNull(assembler.accept(byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8)))
+    }
+
     private fun magic(parts: Int): ByteArray =
         ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).put("MGIK".toByteArray()).putInt(parts).array()
 

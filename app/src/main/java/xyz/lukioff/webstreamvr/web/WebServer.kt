@@ -1,7 +1,7 @@
 package xyz.lukioff.webstreamvr.web
 
 import android.content.res.AssetManager
-import android.util.Log
+import xyz.lukioff.webstreamvr.diag.AppLog
 import java.io.BufferedInputStream
 import java.io.IOException
 import java.io.InputStream
@@ -21,6 +21,7 @@ class WebServer(
     private val assets: AssetManager,
     private val hub: ViewerHub,
     private val streamCode: String? = null,
+    private val logReport: (() -> String)? = null,
     private val statusJson: () -> String,
 ) {
     private var server: ServerSocket? = null
@@ -36,10 +37,11 @@ class WebServer(
         val executor = Executors.newCachedThreadPool { Thread(it, "WebServer-conn") }
         pool = executor
         Thread({ acceptLoop(socket, executor) }, "WebServer").start()
-        Log.i(TAG, "Listening on port $port")
+        AppLog.i(TAG, "Listening on port $port")
     }
 
     fun stop() {
+        AppLog.i(TAG, "Stopping web server")
         runCatching { server?.close() }
         server = null
         pool?.shutdownNow()
@@ -54,12 +56,13 @@ class WebServer(
             } catch (_: SocketException) {
                 break
             } catch (e: IOException) {
-                Log.w(TAG, "accept failed", e)
+                AppLog.w(TAG, "accept failed", e)
                 continue
             }
             try {
                 executor.execute { handle(client) }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                AppLog.w(TAG, "Rejected client connection from ${client.inetAddress?.hostAddress}", e)
                 runCatching { client.close() }
             }
         }
@@ -67,21 +70,26 @@ class WebServer(
 
     private fun handle(client: Socket) {
         var upgraded = false
+        val remoteIp = client.inetAddress?.hostAddress ?: "unknown"
+        var pathForLog = "?"
         try {
             client.soTimeout = 15_000
             val input = BufferedInputStream(client.getInputStream(), 8192)
             val request = readRequest(input) ?: return
             val output = client.getOutputStream()
             val path = request.path.substringBefore('?')
+            pathForLog = path
             when {
                 path == "/ws" && request.headers["upgrade"].equals("websocket", ignoreCase = true) -> {
                     val code = getQueryParam(request.path, "code")
                     if (streamCode != null && code != streamCode) {
+                        AppLog.w(TAG, "Unauthorized /ws attempt from $remoteIp")
                         respond(output, 401, "text/plain; charset=utf-8", "Unauthorized: Invalid code".toByteArray(), request.method)
                         return
                     }
                     val key = request.headers["sec-websocket-key"]
                     if (key == null) {
+                        AppLog.w(TAG, "Missing Sec-WebSocket-Key from $remoteIp")
                         respond(output, 400, "text/plain", "Missing Sec-WebSocket-Key".toByteArray(), request.method)
                         return
                     }
@@ -98,30 +106,53 @@ class WebServer(
                 path == "/api/status" -> {
                     val code = getQueryParam(request.path, "code")
                     if (streamCode != null && code != streamCode) {
+                        AppLog.w(TAG, "Unauthorized /api/status attempt from $remoteIp")
                         respond(output, 401, "application/json; charset=utf-8", """{"error":"Unauthorized"}""".toByteArray(), request.method)
                     } else {
                         respond(output, 200, "application/json; charset=utf-8", statusJson().toByteArray(), request.method)
                     }
                 }
-                else -> serveAsset(output, path, request.method)
+                path == "/api/logs" -> {
+                    val code = getQueryParam(request.path, "code")
+                    if (streamCode != null && code != streamCode) {
+                        AppLog.w(TAG, "Unauthorized /api/logs attempt from $remoteIp")
+                        respond(output, 401, "text/plain; charset=utf-8", "Unauthorized".toByteArray(), request.method)
+                    } else if (logReport == null) {
+                        respond(output, 404, "text/plain; charset=utf-8", "Logs unavailable".toByteArray(), request.method)
+                    } else {
+                        AppLog.i(TAG, "Serving diagnostic log download to $remoteIp")
+                        respond(
+                            output,
+                            200,
+                            "text/plain; charset=utf-8",
+                            logReport.invoke().toByteArray(Charsets.UTF_8),
+                            request.method,
+                            extraHeaders = "Content-Disposition: attachment; filename=\"webstream-vr-logs.txt\"\r\n",
+                        )
+                    }
+                }
+                else -> serveAsset(output, path, request.method, remoteIp)
             }
-        } catch (_: IOException) {
+        } catch (e: IOException) {
+            AppLog.d(TAG, "HTTP connection error from $remoteIp ($pathForLog): ${e.javaClass.simpleName}: ${e.message}")
         } finally {
             if (!upgraded) runCatching { client.close() }
         }
     }
 
-    private fun serveAsset(output: OutputStream, path: String, method: String) {
+    private fun serveAsset(output: OutputStream, path: String, method: String, remoteIp: String) {
         val name = when (path) {
             "/", "" -> "index.html"
             else -> path.trimStart('/')
         }
         if (name.contains("..") || name.contains('\\')) {
+            AppLog.w(TAG, "Blocked invalid asset path '$path' from $remoteIp")
             respond(output, 404, "text/plain", "Not found".toByteArray(), method)
             return
         }
         val body = loadAsset(name)
         if (body == null) {
+            AppLog.d(TAG, "Asset not found: '$name' for $remoteIp")
             respond(output, 404, "text/plain; charset=utf-8", "Not found".toByteArray(), method)
             return
         }
@@ -131,15 +162,24 @@ class WebServer(
     private fun loadAsset(name: String): ByteArray? = synchronized(cache) {
         cache[name] ?: try {
             assets.open("web/$name").use { it.readBytes() }.also { cache[name] = it }
-        } catch (_: IOException) {
+        } catch (e: IOException) {
+            AppLog.d(TAG, "Failed to open asset web/$name: ${e.message}")
             null
         }
     }
 
-    private fun respond(output: OutputStream, status: Int, type: String, body: ByteArray, method: String) {
+    private fun respond(
+        output: OutputStream,
+        status: Int,
+        type: String,
+        body: ByteArray,
+        method: String,
+        extraHeaders: String = "",
+    ) {
         val reason = when (status) {
             200 -> "OK"
             400 -> "Bad Request"
+            401 -> "Unauthorized"
             404 -> "Not Found"
             405 -> "Method Not Allowed"
             else -> "Error"
@@ -148,6 +188,7 @@ class WebServer(
             "Content-Type: $type\r\n" +
             "Content-Length: ${body.size}\r\n" +
             "Cache-Control: no-store\r\n" +
+            extraHeaders +
             "Connection: close\r\n\r\n"
         output.write(head.toByteArray())
         if (method != "HEAD") output.write(body)

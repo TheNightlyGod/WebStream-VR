@@ -1,6 +1,6 @@
 package xyz.lukioff.webstreamvr.web
 
-import android.util.Log
+import xyz.lukioff.webstreamvr.diag.AppLog
 import java.io.BufferedOutputStream
 import java.io.IOException
 import java.io.InputStream
@@ -32,6 +32,7 @@ class ViewerHub(private val requestKeyframe: () -> Unit) {
 
     private val frameCounter = AtomicInteger()
     private val byteCounter = AtomicLong()
+    private val nonSlicePackets = AtomicInteger()
     @Volatile var fps = 0f
         private set
     @Volatile var kbps = 0
@@ -44,6 +45,7 @@ class ViewerHub(private val requestKeyframe: () -> Unit) {
         val units = H264.scan(data, offset, length)
         if (units.hasParameterSets && !units.hasSlice) {
             // The encoder emits SPS/PPS once per (re)configuration; viewers need them to set up decoding.
+            AppLog.i(TAG, "Updated H.264 codec config frame (${length}B, viewers=${viewers.size})")
             val frame = WebSocket.frame(WebSocket.OPCODE_BINARY, header(TYPE_CONFIG, 0, 0, 0, timestampUs), data, offset, length)
             configFrame = frame
             for (viewer in viewers) {
@@ -52,7 +54,13 @@ class ViewerHub(private val requestKeyframe: () -> Unit) {
             }
             return
         }
-        if (!units.hasSlice) return
+        if (!units.hasSlice) {
+            val count = nonSlicePackets.incrementAndGet()
+            if (count <= 5 || count % 100 == 0) {
+                AppLog.d(TAG, "Ignoring H.264 packet without slice (#$count, nalMask=0x${units.types.toString(16)}, len=$length)")
+            }
+            return
+        }
         frameCounter.incrementAndGet()
         byteCounter.addAndGet(length.toLong())
         if (viewers.isEmpty()) return
@@ -69,6 +77,7 @@ class ViewerHub(private val requestKeyframe: () -> Unit) {
                     needKeyframe = true
                     continue
                 }
+                AppLog.i(TAG, "Viewer ${viewer.id} synced on keyframe (${length}B)")
                 viewer.waitingForKeyframe = false
             }
             if (!viewer.send(frame, essential = false)) needKeyframe = true
@@ -114,30 +123,37 @@ class ViewerHub(private val requestKeyframe: () -> Unit) {
         viewer.send(WebSocket.textFrame(welcome), essential = true)
         configFrame?.let { viewer.send(it, essential = true) }
         viewers.add(viewer)
-        Log.i(TAG, "Viewer ${viewer.id} connected from ${socket.inetAddress.hostAddress} (${viewers.size} total)")
+        AppLog.i(TAG, "Viewer ${viewer.id} connected from ${socket.inetAddress.hostAddress} (${viewers.size} total)")
         requestKeyframe()
         try {
             while (!viewer.closed) {
                 val message = WebSocket.read(input)
                 when (message.opcode) {
-                    WebSocket.OPCODE_CLOSE -> break
+                    WebSocket.OPCODE_CLOSE -> {
+                        AppLog.d(TAG, "Viewer ${viewer.id} sent WebSocket CLOSE")
+                        break
+                    }
                     WebSocket.OPCODE_PING -> viewer.send(WebSocket.frame(WebSocket.OPCODE_PONG, null, message.payload), essential = true)
                     WebSocket.OPCODE_TEXT -> if (String(message.payload).contains("\"keyframe\"")) {
+                        AppLog.d(TAG, "Viewer ${viewer.id} requested keyframe")
                         viewer.waitingForKeyframe = true
                         configFrame?.let { viewer.send(it, essential = true) }
                         requestKeyframe()
                     }
                 }
             }
-        } catch (_: IOException) {
+        } catch (e: IOException) {
+            if (!viewer.closed) AppLog.d(TAG, "Viewer ${viewer.id} read ended: ${e.javaClass.simpleName}: ${e.message}")
         } finally {
             viewers.remove(viewer)
             viewer.close()
-            Log.i(TAG, "Viewer ${viewer.id} disconnected (${viewers.size} left)")
+            AppLog.i(TAG, "Viewer ${viewer.id} disconnected (${viewers.size} left)")
         }
     }
 
     fun closeAll() {
+        val count = viewers.size
+        if (count > 0) AppLog.i(TAG, "Closing all $count viewer(s)")
         for (viewer in viewers) viewer.close()
         viewers.clear()
     }
@@ -159,7 +175,13 @@ class ViewerHub(private val requestKeyframe: () -> Unit) {
         /** Returns false when the viewer is too far behind and was reset to wait for a keyframe. */
         fun send(frame: ByteArray, essential: Boolean): Boolean {
             if (closed) return true
-            if (!essential && (queue.size > MAX_QUEUED_MESSAGES || queuedBytes.get() > MAX_QUEUED_BYTES)) {
+            val qSize = queue.size
+            val qBytes = queuedBytes.get()
+            if (!essential && (qSize > MAX_QUEUED_MESSAGES || qBytes > MAX_QUEUED_BYTES)) {
+                AppLog.w(
+                    TAG,
+                    "Viewer $id queue overflow (msgs=$qSize, bytes=$qBytes); dropping queue and resetting to keyframe"
+                )
                 queue.clear()
                 queuedBytes.set(DROPPED_NOTICE.size.toLong())
                 // Tell the page why the picture is about to pause.
@@ -180,7 +202,8 @@ class ViewerHub(private val requestKeyframe: () -> Unit) {
                     output.write(frame)
                     if (queue.isEmpty()) output.flush()
                 }
-            } catch (_: IOException) {
+            } catch (e: IOException) {
+                if (!closed) AppLog.d(TAG, "Viewer $id write failed: ${e.javaClass.simpleName}: ${e.message}")
             } catch (_: InterruptedException) {
             } finally {
                 close()

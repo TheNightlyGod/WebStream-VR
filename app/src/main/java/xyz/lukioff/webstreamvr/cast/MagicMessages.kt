@@ -1,5 +1,6 @@
 package xyz.lukioff.webstreamvr.cast
 
+import xyz.lukioff.webstreamvr.diag.AppLog
 import java.nio.ByteBuffer
 
 /**
@@ -105,9 +106,16 @@ object MagicMessages {
 
 private fun ByteBuffer.getString(): String {
     val n = int
+    if (n < 0 || n > remaining()) {
+        throw IllegalArgumentException("Invalid Magic string length $n (remaining=${remaining()})")
+    }
     val bytes = ByteArray(n)
     get(bytes)
-    position(position() + ((4 - (n and 3)) and 3))
+    val pad = (4 - (n and 3)) and 3
+    if (pad > remaining()) {
+        throw IllegalArgumentException("Invalid Magic string padding $pad for length $n (remaining=${remaining()})")
+    }
+    position(position() + pad)
     return String(bytes)
 }
 
@@ -139,32 +147,49 @@ sealed interface IncomingMagic {
     ) : IncomingMagic
     data class DestroyLayer(val layerId: Int) : IncomingMagic
     data object StopCasting : IncomingMagic
-    data class Other(val type: Int, val size: Int) : IncomingMagic
+    data class Other(val type: Int, val size: Int, val preview: String = "") : IncomingMagic
 
     companion object {
         fun parse(bytes: ByteArray): IncomingMagic {
+            if (bytes.size < 4) {
+                throw IllegalArgumentException("Magic message too short: size=${bytes.size} hex=[${AppLog.hexPreview(bytes)}]")
+            }
             val buffer = ByteBuffer.wrap(bytes)
-            return when (val type = buffer.int) {
-                MagicMessages.HANDSHAKE -> {
-                    val version = buffer.int
-                    Handshake(version, buffer.getString())
+            val type = buffer.int
+            return try {
+                when (type) {
+                    MagicMessages.HANDSHAKE -> {
+                        val version = buffer.int
+                        Handshake(version, buffer.getString())
+                    }
+                    MagicMessages.PING -> Ping(buffer.int)
+                    MagicMessages.VIDEO_SEGMENT -> {
+                        if (bytes.size < 16) throw IllegalArgumentException("VIDEO_SEGMENT header truncated")
+                        VideoSegment(buffer.int, buffer.int, buffer.int, bytes, 16)
+                    }
+                    MagicMessages.AUDIO_SEGMENT -> {
+                        if (bytes.size < 16) throw IllegalArgumentException("AUDIO_SEGMENT header truncated")
+                        AudioSegment(buffer.int, buffer.long, bytes, 16)
+                    }
+                    MagicMessages.LAYER_CONFIGURATION -> {
+                        val layerId = buffer.int
+                        val width = buffer.int
+                        val height = buffer.int
+                        buffer.position(buffer.position() + 16) // posX, posY, depth, layerType
+                        buffer.getString() // application name
+                        val layerName = buffer.getString()
+                        buffer.getString() // device serial
+                        LayerConfiguration(layerId, width, height, layerName, buffer.getString())
+                    }
+                    MagicMessages.DESTROY_LAYER -> DestroyLayer(buffer.int)
+                    MagicMessages.STOP_CASTING -> StopCasting
+                    else -> Other(type, bytes.size, AppLog.hexPreview(bytes, offset = 4))
                 }
-                MagicMessages.PING -> Ping(buffer.int)
-                MagicMessages.VIDEO_SEGMENT -> VideoSegment(buffer.int, buffer.int, buffer.int, bytes, 16)
-                MagicMessages.AUDIO_SEGMENT -> AudioSegment(buffer.int, buffer.long, bytes, 16)
-                MagicMessages.LAYER_CONFIGURATION -> {
-                    val layerId = buffer.int
-                    val width = buffer.int
-                    val height = buffer.int
-                    buffer.position(buffer.position() + 16) // posX, posY, depth, layerType
-                    buffer.getString() // application name
-                    val layerName = buffer.getString()
-                    buffer.getString() // device serial
-                    LayerConfiguration(layerId, width, height, layerName, buffer.getString())
-                }
-                MagicMessages.DESTROY_LAYER -> DestroyLayer(buffer.int)
-                MagicMessages.STOP_CASTING -> StopCasting
-                else -> Other(type, bytes.size)
+            } catch (e: Exception) {
+                throw IllegalArgumentException(
+                    "Failed to parse Magic message type=$type size=${bytes.size} hex=[${AppLog.hexPreview(bytes)}]",
+                    e
+                )
             }
         }
     }

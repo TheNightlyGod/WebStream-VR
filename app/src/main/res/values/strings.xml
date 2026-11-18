@@ -45,5 +45,20 @@
     <string name="install_dialog_title">Требуется сервис кастинга</string>
     <string name="install_dialog_desc_missing">Пакет com.oculus.magicislandcastingservice не найден в системе. Установить его сейчас?</string>
     <string name="install_dialog_desc_outdated">Версия com.oculus.magicislandcastingservice на устройстве устарела или не подходит. Установить нужную версию из ресурсов?</string>
+    <string name="install_failed">Не удалось запустить установку сервиса кастинга (см. логи)</string>
     <string name="action_cancel">Отмена</string>
+
+    <string name="diagnostics_title">Диагностика и логи</string>
+    <string name="diagnostics_hint">Если трансляция не запускается или приложение падает, скопируйте или отправьте отчёт разработчику.</string>
+    <string name="diagnostics_crash_banner">Обнаружен отчёт о прошлом сбое приложения — включён в логи.</string>
+    <string name="action_view_logs">Открыть логи</string>
+    <string name="action_copy_logs">Скопировать</string>
+    <string name="action_share_logs">Поделиться</string>
+    <string name="action_clear_logs">Очистить</string>
+    <string name="action_close">Закрыть</string>
+    <string name="logs_copied">Диагностический отчёт скопирован</string>
+    <string name="logs_cleared">Логи очищены</string>
+    <string name="logs_share_chooser">Отправить логи</string>
+    <string name="logs_share_failed">Не удалось открыть меню отправки. Используйте «Скопировать» или /api/logs в браузере.</string>
+    <string name="logs_empty">Логи пока пусты</string>
 </resources>

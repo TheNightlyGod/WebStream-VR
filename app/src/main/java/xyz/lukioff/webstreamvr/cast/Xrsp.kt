@@ -1,5 +1,6 @@
 package xyz.lukioff.webstreamvr.cast
 
+import xyz.lukioff.webstreamvr.diag.AppLog
 import java.io.EOFException
 import java.io.IOException
 import java.io.InputStream
@@ -33,13 +34,17 @@ object Xrsp {
         val flags = (header[0].toInt() and 0xFF) or ((header[1].toInt() and 0xFF) shl 8)
         val words = (header[2].toInt() and 0xFF) or ((header[3].toInt() and 0xFF) shl 8)
         val total = (words + 1) * 4
-        if (words == 0 || total > MAX_PACKET_BYTES) throw IOException("Bad XRSP packet size $total")
+        if (words == 0 || total > MAX_PACKET_BYTES) {
+            throw IOException("Bad XRSP packet size $total (words=$words, flags=0x${flags.toString(16)})")
+        }
         val body = ByteArray(total - HEADER_BYTES)
         readFully(input, body)
         var length = body.size
         if (flags and FLAG_PADDING != 0) {
             val padding = body[body.size - 1].toInt() and 0xFF
-            if (padding == 0 || padding > body.size) throw IOException("Bad XRSP padding $padding")
+            if (padding == 0 || padding > body.size) {
+                throw IOException("Bad XRSP padding $padding (bodySize=${body.size}, flags=0x${flags.toString(16)})")
+            }
             length -= padding
         }
         val topic = (flags shr 8) and 0x3F
@@ -105,14 +110,27 @@ class MagicDatagramAssembler {
     private var expectedParts = 0
     private val parts = ArrayList<ByteArray>()
     private val pendingChunks = HashMap<Int, Array<ByteArray?>>()
+    private var unexpectedPayloads = 0
 
     /** Feeds one packet payload; returns a completed message or null. */
     fun accept(payload: ByteArray): Message? {
         if (expectedParts == 0) {
-            if (payload.size < 8 || !isMagicHeader(payload)) return null
+            if (payload.size < 8 || !isMagicHeader(payload)) {
+                unexpectedPayloads++
+                if (unexpectedPayloads <= 5 || unexpectedPayloads % 100 == 0) {
+                    AppLog.w(
+                        TAG,
+                        "Dropped non-MGIK payload #$unexpectedPayloads (size=${payload.size}, hex=[${AppLog.hexPreview(payload)}])"
+                    )
+                }
+                return null
+            }
             expectedParts = ByteBuffer.wrap(payload, 4, 4).order(ByteOrder.LITTLE_ENDIAN).int
             parts.clear()
-            if (expectedParts <= 0 || expectedParts > 1024) expectedParts = 0
+            if (expectedParts <= 0 || expectedParts > 1024) {
+                AppLog.w(TAG, "Invalid MGIK part count=$expectedParts, resetting")
+                expectedParts = 0
+            }
             return null
         }
         parts.add(payload)
@@ -123,7 +141,11 @@ class MagicDatagramAssembler {
 
     private fun assemble(): Message? {
         val first = parts[0]
-        if (first.size < HEADER_BYTES) return null
+        if (first.size < HEADER_BYTES) {
+            AppLog.w(TAG, "MGIK first part too short: ${first.size} < $HEADER_BYTES (parts=${parts.size})")
+            parts.clear()
+            return null
+        }
         val header = ByteBuffer.wrap(first, 0, HEADER_BYTES)
         val appId = header.int
         header.int // datagram id
@@ -143,16 +165,26 @@ class MagicDatagramAssembler {
         parts.clear()
 
         if (total <= 1) return Message(appId, messageId, chunk)
-        if (index !in 0 until total || total > 4096) return null
+        if (index !in 0 until total || total > 4096) {
+            AppLog.w(TAG, "Invalid chunk bounds: messageId=$messageId index=$index total=$total")
+            return null
+        }
         val chunks = pendingChunks.getOrPut(messageId) { arrayOfNulls(total) }
         if (chunks.size != total) {
+            AppLog.w(TAG, "Chunk total mismatch for messageId=$messageId: expected=${chunks.size}, got=$total")
             pendingChunks.remove(messageId)
             return null
         }
         chunks[index] = chunk
         if (chunks.any { it == null }) {
             // Drop stale partial messages so a lost chunk cannot leak memory.
-            if (pendingChunks.size > 8) pendingChunks.keys.filter { it < messageId - 8 }.forEach { pendingChunks.remove(it) }
+            if (pendingChunks.size > 8) {
+                val stale = pendingChunks.keys.filter { it < messageId - 8 }
+                if (stale.isNotEmpty()) {
+                    AppLog.w(TAG, "Evicting ${stale.size} incomplete MGIK messages older than messageId=$messageId")
+                    stale.forEach { pendingChunks.remove(it) }
+                }
+            }
             return null
         }
         pendingChunks.remove(messageId)
@@ -169,6 +201,7 @@ class MagicDatagramAssembler {
         p[0] == 'M'.code.toByte() && p[1] == 'G'.code.toByte() && p[2] == 'I'.code.toByte() && p[3] == 'K'.code.toByte()
 
     companion object {
+        private const val TAG = "MagicDatagramAssembler"
         const val HEADER_BYTES = 24
         private const val QOS_HIGH = 2
 

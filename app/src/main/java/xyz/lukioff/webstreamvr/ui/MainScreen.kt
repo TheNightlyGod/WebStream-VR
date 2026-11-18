@@ -1,6 +1,12 @@
 package xyz.lukioff.webstreamvr.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -30,6 +37,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -40,31 +48,38 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import xyz.lukioff.webstreamvr.AspectRatio
 import xyz.lukioff.webstreamvr.R
 import xyz.lukioff.webstreamvr.StreamSettings
 import xyz.lukioff.webstreamvr.StreamStatus
 import xyz.lukioff.webstreamvr.cast.CastPkgState
 import xyz.lukioff.webstreamvr.cast.HeadsetLink
+import xyz.lukioff.webstreamvr.diag.AppLog
 
 @Composable
 fun MainScreen(
     status: StreamStatus,
     settings: StreamSettings,
     castPkgState: CastPkgState,
+    hasCrashReport: Boolean = false,
+    logRevision: Long = 0L,
     onSettingsChange: (StreamSettings) -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onInstallService: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     var showInstallDialog by remember { mutableStateOf(false) }
+    var showLogsDialog by remember { mutableStateOf(false) }
 
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(
@@ -90,6 +105,12 @@ fun MainScreen(
                 onInstallService = onInstallService,
             )
             SettingsCard(settings, onSettingsChange)
+            DiagnosticsCard(
+                hasCrashReport = hasCrashReport,
+                onViewLogs = { showLogsDialog = true },
+                onCopyLogs = { copyLogsToClipboard(context) },
+                onShareLogs = { shareLogsFile(context) },
+            )
             Text(
                 stringResource(R.string.hint_footer),
                 style = MaterialTheme.typography.bodySmall,
@@ -120,6 +141,58 @@ fun MainScreen(
             dismissButton = {
                 OutlinedButton(onClick = { showInstallDialog = false }) {
                     Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
+    }
+
+    if (showLogsDialog) {
+        val logText = remember(logRevision, showLogsDialog) {
+            AppLog.recentText().ifBlank { context.getString(R.string.logs_empty) }
+        }
+        AlertDialog(
+            onDismissRequest = { showLogsDialog = false },
+            title = { Text(stringResource(R.string.diagnostics_title)) },
+            text = {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 160.dp, max = 420.dp)
+                        .verticalScroll(rememberScrollState())
+                        .horizontalScroll(rememberScrollState())
+                ) {
+                    SelectionContainer {
+                        Text(
+                            text = logText,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { copyLogsToClipboard(context) }) {
+                        Text(stringResource(R.string.action_copy_logs))
+                    }
+                    TextButton(onClick = { shareLogsFile(context) }) {
+                        Text(stringResource(R.string.action_share_logs))
+                    }
+                    Button(onClick = { showLogsDialog = false }) {
+                        Text(stringResource(R.string.action_close))
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        AppLog.clear(context)
+                        Toast.makeText(context, R.string.logs_cleared, Toast.LENGTH_SHORT).show()
+                    }
+                ) {
+                    Text(stringResource(R.string.action_clear_logs))
                 }
             }
         )
@@ -329,6 +402,75 @@ private fun SwitchRow(title: String, checked: Boolean, onChange: (Boolean) -> Un
     Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(title, Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
         Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DiagnosticsCard(
+    hasCrashReport: Boolean,
+    onViewLogs: () -> Unit,
+    onCopyLogs: () -> Unit,
+    onShareLogs: () -> Unit,
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(stringResource(R.string.diagnostics_title), style = MaterialTheme.typography.titleMedium)
+            if (hasCrashReport) {
+                Text(
+                    stringResource(R.string.diagnostics_crash_banner),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            Text(
+                stringResource(R.string.diagnostics_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(onClick = onViewLogs) {
+                    Text(stringResource(R.string.action_view_logs))
+                }
+                OutlinedButton(onClick = onCopyLogs) {
+                    Text(stringResource(R.string.action_copy_logs))
+                }
+                OutlinedButton(onClick = onShareLogs) {
+                    Text(stringResource(R.string.action_share_logs))
+                }
+            }
+        }
+    }
+}
+
+private fun copyLogsToClipboard(context: Context) {
+    runCatching {
+        val report = AppLog.buildReport(context)
+        val clipboard = context.getSystemService(ClipboardManager::class.java)
+        clipboard?.setPrimaryClip(ClipData.newPlainText("WebStream-VR Logs", report))
+        Toast.makeText(context, R.string.logs_copied, Toast.LENGTH_SHORT).show()
+    }.onFailure {
+        AppLog.w("MainScreen", "Failed to copy logs", it)
+    }
+}
+
+private fun shareLogsFile(context: Context) {
+    runCatching {
+        val file = AppLog.exportReportToCache(context)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, "WebStream-VR Diagnostic Logs")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(shareIntent, context.getString(R.string.logs_share_chooser)))
+    }.onFailure {
+        AppLog.w("MainScreen", "Failed to share logs", it)
+        Toast.makeText(context, R.string.logs_share_failed, Toast.LENGTH_LONG).show()
     }
 }
 

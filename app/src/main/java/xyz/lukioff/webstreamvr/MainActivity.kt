@@ -2,6 +2,7 @@ package xyz.lukioff.webstreamvr
 
 import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -18,14 +19,16 @@ import androidx.compose.ui.Modifier
 import xyz.lukioff.webstreamvr.cast.CastPkgState
 import xyz.lukioff.webstreamvr.cast.CastingServiceInstaller
 import xyz.lukioff.webstreamvr.cast.castPackageState
+import xyz.lukioff.webstreamvr.diag.AppLog
 import xyz.lukioff.webstreamvr.ui.MainScreen
 import xyz.lukioff.webstreamvr.ui.theme.WebStreamVRTheme
 
 class MainActivity : ComponentActivity() {
     private val castPkgStateState = mutableStateOf(CastPkgState.OK)
 
-    private val installLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+    private val installLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val newState = castPackageState(this)
+        AppLog.i(TAG, "Service installer finished: resultCode=${result.resultCode}, castPkgState=$newState")
         castPkgStateState.value = newState
         if (newState == CastPkgState.OK) {
             StreamService.start(this)
@@ -34,12 +37,17 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppLog.init(applicationContext)
+        AppLog.i(TAG, "onCreate(restored=${savedInstanceState != null}, action=${intent?.action})")
         enableEdgeToEdge()
         if (savedInstanceState == null) handleAction(intent)
         castPkgStateState.value = castPackageState(this)
+        AppLog.i(TAG, "Initial castPkgState=${castPkgStateState.value}")
         setContent {
             WebStreamVRTheme {
                 val status by StreamService.status.collectAsState()
+                val hasCrashReport by AppLog.hasCrashReport.collectAsState()
+                val logRevision by AppLog.revision.collectAsState()
                 var settings by remember { mutableStateOf(StreamSettings.load(this)) }
                 val castPkgState by castPkgStateState
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
@@ -47,6 +55,8 @@ class MainActivity : ComponentActivity() {
                         status = status,
                         settings = settings,
                         castPkgState = castPkgState,
+                        hasCrashReport = hasCrashReport,
+                        logRevision = logRevision,
                         onSettingsChange = {
                             settings = it
                             StreamSettings.save(this, it)
@@ -55,7 +65,9 @@ class MainActivity : ComponentActivity() {
                         onStart = { StreamService.start(this) },
                         onStop = { StreamService.stop(this) },
                         onInstallService = {
-                            CastingServiceInstaller.install(this, installLauncher)
+                            if (!CastingServiceInstaller.install(this, installLauncher)) {
+                                Toast.makeText(this, R.string.install_failed, Toast.LENGTH_LONG).show()
+                            }
                         },
                         modifier = Modifier.padding(innerPadding),
                     )
@@ -66,11 +78,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        castPkgStateState.value = castPackageState(this)
+        val updated = castPackageState(this)
+        if (updated != castPkgStateState.value) {
+            AppLog.i(TAG, "castPkgState changed onResume: ${castPkgStateState.value} -> $updated")
+        }
+        castPkgStateState.value = updated
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        AppLog.i(TAG, "onNewIntent(action=${intent.action})")
         handleAction(intent)
     }
 
@@ -81,5 +98,9 @@ class MainActivity : ComponentActivity() {
             StreamService.ACTION_START -> StreamService.start(this)
             StreamService.ACTION_STOP -> StreamService.stop(this)
         }
+    }
+
+    companion object {
+        private const val TAG = "MainActivity"
     }
 }
